@@ -1,0 +1,227 @@
+import OpenAI from "openai";
+import { getSession } from "@/lib/session";
+import { SYSTEM_PROMPT } from "@/lib/system-prompt";
+import { OPENAI_RESPONSES_TOOLS } from "@/lib/openai-tools";
+import { executePeptideTool } from "@/lib/peptide-tool";
+import { executePriceTool } from "@/lib/price-tool";
+import { executeMemoryTool } from "@/lib/memory-tool";
+import { PROTOCOL_JSON_MARKER, type ProtocoloData } from "@/lib/protocol-types";
+
+// Text mode using OpenAI Responses API + GPT-5.5 + Structured Outputs.
+//
+// Flow:
+//  - Stream text chunks live to the client as they arrive
+//  - When the model calls a lookup tool (peptide/price/memory) → execute,
+//    feed result back, loop
+//  - When the model calls finalize_protocol(protocol_data) → emit the
+//    structured JSON to the client (with PROTOCOL_JSON_MARKER for ChatPage
+//    to parse) and end the conversation
+//
+// Why this pattern: tool args go through Structured Outputs, so the
+// finalize_protocol JSON is GUARANTEED structurally valid (no markdown
+// wrapping, no truncation, no missing fields).
+
+const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const TEXT_MODEL = process.env.OPENAI_TEXT_MODEL || "gpt-5.5";
+
+type ResponseInput = OpenAI.Responses.ResponseInput;
+
+export async function POST(req: Request) {
+  const session = await getSession();
+  if (!session) return new Response("Unauthorized", { status: 401 });
+
+  if (!process.env.OPENAI_API_KEY) {
+    return new Response("OPENAI_API_KEY missing", { status: 500 });
+  }
+
+  const body = (await req.json()) as {
+    messages: Array<{ role: "user" | "assistant"; content: string }>;
+    currentDraft?: ProtocoloData | null;
+  };
+
+  // GPT-5.5 already knows today's date; just substitute the doctor's email.
+  const instructions = SYSTEM_PROMPT.replace(
+    '"creado_por": "..."',
+    `"creado_por": "${session.email}"`
+  ).replace(
+    '"fecha": "..."',
+    `"fecha": "${new Date().toISOString().slice(0, 10)}"`
+  );
+
+  // Build input from the chat history. Responses API uses {role, content}.
+  // If the UI is showing a generated draft, attach it to the LAST user turn
+  // as a CURRENT_DRAFT block — the system prompt's "Modo edición" section
+  // tells the model to treat it as ground truth and only call tools for
+  // NEW data, instead of re-running the whole pipeline.
+  const input: ResponseInput = body.messages.map((m, i) => {
+    const isLastUser =
+      i === body.messages.length - 1 && m.role === "user" && body.currentDraft;
+    if (isLastUser) {
+      return {
+        role: m.role,
+        content:
+          `### CURRENT_DRAFT\n\`\`\`json\n${JSON.stringify(body.currentDraft)}\n\`\`\`\n\n` +
+          `### MENSAJE DEL MÉDICO\n${m.content}`,
+      };
+    }
+    return { role: m.role, content: m.content };
+  });
+
+  const encoder = new TextEncoder();
+
+  const stream = new ReadableStream({
+    async start(controller) {
+      try {
+        // Agentic loop: up to 6 turns of tool execution
+        for (let turn = 0; turn < 6; turn++) {
+          const resp = await client.responses.create({
+            model: TEXT_MODEL,
+            instructions,
+            input,
+            tools: OPENAI_RESPONSES_TOOLS,
+            tool_choice: "auto",
+            reasoning: { effort: "low" },
+            text: { verbosity: "low" },
+            stream: true,
+          });
+
+          const turnToolCalls: Array<{
+            call_id: string;
+            name: string;
+            arguments: string;
+          }> = [];
+          let assistantTextBuffer = "";
+          let finalizeProtocolArgs: string | null = null;
+
+          for await (const event of resp) {
+            const type = event.type as string;
+
+            // Streaming text delta → forward to client
+            if (type === "response.output_text.delta") {
+              const delta = (event as { delta?: string }).delta ?? "";
+              if (delta) {
+                assistantTextBuffer += delta;
+                controller.enqueue(encoder.encode(delta));
+              }
+              continue;
+            }
+
+            // Tool call finished arriving → execute (or capture)
+            if (type === "response.output_item.done") {
+              const item = (event as { item?: { type?: string } }).item;
+              if (item?.type === "function_call") {
+                const fnCall = item as {
+                  call_id: string;
+                  name: string;
+                  arguments: string;
+                };
+                turnToolCalls.push({
+                  call_id: fnCall.call_id,
+                  name: fnCall.name,
+                  arguments: fnCall.arguments ?? "{}",
+                });
+
+                if (fnCall.name === "finalize_protocol") {
+                  finalizeProtocolArgs = fnCall.arguments ?? "{}";
+                }
+              }
+              continue;
+            }
+
+            if (type === "response.error" || type === "error") {
+              const err = (event as { error?: unknown }).error;
+              console.error("[chat] response error:", err);
+            }
+          }
+
+          // Persist this turn's outputs back into context
+          for (const tc of turnToolCalls) {
+            input.push({
+              type: "function_call",
+              call_id: tc.call_id,
+              name: tc.name,
+              arguments: tc.arguments,
+            } as OpenAI.Responses.ResponseInputItem);
+          }
+
+          // If finalize was called → emit structured JSON + stop
+          if (finalizeProtocolArgs) {
+            try {
+              const protocolData = JSON.parse(finalizeProtocolArgs) as ProtocoloData;
+              // Inject server-side fields the model shouldn't worry about
+              protocolData.metadata.creado_por = session.email;
+              controller.enqueue(
+                encoder.encode(
+                  `\n\n${PROTOCOL_JSON_MARKER}\n${JSON.stringify(protocolData)}\n${PROTOCOL_JSON_MARKER}`
+                )
+              );
+              console.log(`[chat] finalize_protocol OK for ${protocolData.paciente?.nombre}`);
+            } catch (err) {
+              console.error("[chat] finalize_protocol args parse failed:", err);
+            }
+            // Acknowledge the tool call so the model context is consistent (not strictly
+            // needed since we're stopping, but harmless if we ever continue)
+            input.push({
+              type: "function_call_output",
+              call_id: turnToolCalls.find((c) => c.name === "finalize_protocol")!.call_id,
+              output: JSON.stringify({ ok: true }),
+            } as OpenAI.Responses.ResponseInputItem);
+            break;
+          }
+
+          // No tools called and no finalize → conversation is done (model is waiting)
+          const lookupCalls = turnToolCalls.filter((tc) => tc.name !== "finalize_protocol");
+          if (lookupCalls.length === 0) break;
+
+          // Execute each lookup tool, push results
+          for (const tc of lookupCalls) {
+            let parsedArgs: Record<string, unknown> = {};
+            try {
+              parsedArgs = tc.arguments ? JSON.parse(tc.arguments) : {};
+            } catch (err) {
+              console.error(`[chat] tool ${tc.name} bad args:`, tc.arguments, err);
+            }
+
+            let result: unknown;
+            if (tc.name === "get_peptide_info") {
+              result = await executePeptideTool(parsedArgs as { name: string });
+            } else if (tc.name === "get_product_price") {
+              result = await executePriceTool(parsedArgs as { product_name: string });
+            } else if (tc.name === "search_past_protocols") {
+              result = await executeMemoryTool(
+                parsedArgs as { query: string; limit?: number },
+                session.id
+              );
+            } else {
+              result = { error: `unknown tool: ${tc.name}` };
+            }
+
+            input.push({
+              type: "function_call_output",
+              call_id: tc.call_id,
+              output: JSON.stringify(result),
+            } as OpenAI.Responses.ResponseInputItem);
+          }
+
+          // Suppress unused warning when there's no streamed text yet
+          void assistantTextBuffer;
+        }
+      } catch (err) {
+        console.error("[chat] stream error:", err);
+        controller.enqueue(
+          encoder.encode("\n\n[Error generando respuesta. Intenta de nuevo.]")
+        );
+      } finally {
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Transfer-Encoding": "chunked",
+      "X-Accel-Buffering": "no",
+    },
+  });
+}

@@ -1,0 +1,69 @@
+import { NextResponse } from "next/server";
+import OpenAI from "openai";
+import { getSession } from "@/lib/session";
+
+// Mints a Realtime client secret (ephemeral key) using OpenAI's GA endpoint
+// via the official SDK helper: client.realtime.clientSecrets.create().
+//
+// The Beta endpoint POST /v1/realtime/sessions was discontinued. The GA
+// endpoint is POST /v1/realtime/client_secrets and uses a different body
+// shape (nested under `session`, with `type: "realtime"` and `audio.input/
+// audio.output` blocks).
+//
+// We only set minimal session config here. The browser-side @openai/agents
+// SDK overrides instructions, tools, and voice via session.update events
+// after connecting.
+
+const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+const REALTIME_MODEL = (process.env.OPENAI_REALTIME_MODEL ||
+  "gpt-realtime-2") as
+  | "gpt-realtime-2"
+  | "gpt-realtime-1.5"
+  | "gpt-realtime"
+  | (string & {});
+
+const REALTIME_VOICE = process.env.OPENAI_REALTIME_VOICE || "marin";
+
+export async function POST() {
+  const userSession = await getSession();
+  if (!userSession) return new Response("Unauthorized", { status: 401 });
+
+  if (!process.env.OPENAI_API_KEY) {
+    return NextResponse.json({ error: "OPENAI_API_KEY missing on server" }, { status: 500 });
+  }
+
+  try {
+    const secret = await client.realtime.clientSecrets.create({
+      session: {
+        type: "realtime",
+        model: REALTIME_MODEL,
+        output_modalities: ["audio"],
+        audio: {
+          input: {
+            format: { type: "audio/pcm", rate: 24000 },
+            turn_detection: { type: "semantic_vad" },
+            transcription: { model: "whisper-1" },
+          },
+          output: {
+            format: { type: "audio/pcm", rate: 24000 },
+            voice: REALTIME_VOICE,
+          },
+        },
+      },
+    });
+
+    return NextResponse.json({
+      ephemeral_key: secret.value,
+      model: REALTIME_MODEL,
+      expires_at: secret.expires_at,
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[realtime/session] OpenAI error:", message);
+    return NextResponse.json(
+      { error: `OpenAI session error: ${message}` },
+      { status: 502 }
+    );
+  }
+}

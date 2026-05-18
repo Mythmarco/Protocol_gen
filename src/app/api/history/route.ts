@@ -1,24 +1,18 @@
-import { redirect } from "next/navigation";
+import { NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
 import { createAdminClient } from "@/utils/supabase/admin";
-import ChatPage from "@/components/ChatPage";
 
-export default async function Home() {
+export async function GET() {
   const session = await getSession();
-  if (!session) redirect("/login");
+  if (!session) return new Response("Unauthorized", { status: 401 });
 
   const supabase = createAdminClient();
-  const { data: history } = await supabase
+  const { data } = await supabase
     .from("protocolos")
     .select("id, paciente_nombre, descripcion, fecha_creacion")
     .eq("creado_por", session.id)
     .order("fecha_creacion", { ascending: false })
     .limit(50);
 
-  return (
-    <ChatPage
-      user={{ email: session.email, name: session.name ?? "" }}
-      history={history ?? []}
-    />
-  );
+  return NextResponse.json({ items: data ?? [] });
 }

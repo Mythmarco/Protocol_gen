@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@plugin "@tailwindcss/typography";
 
 :root {
   --background: #ffffff;
@@ -23,4 +24,65 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+/* Mobile bottom-sheet slide-up animation */
+@keyframes slideUp {
+  from { transform: translateY(100%); }
+  to   { transform: translateY(0); }
+}
+
+/* Modal fade-in for preview */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* Smooth scale-in for cards / sheets */
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.96) translateY(8px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+/* Animated brand-gold gradient for the "generating" loader */
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+/* Voice waveform — bars that scale vertically out of phase */
+@keyframes wavePulse {
+  0%, 100% { transform: scaleY(0.35); }
+  50%      { transform: scaleY(1); }
+}
+
+/* AI orb — morphing blob shape (Siri-like) */
+@keyframes blobMorph {
+  0%, 100% { border-radius: 62% 38% 48% 52% / 50% 60% 40% 50%; }
+  25%      { border-radius: 42% 58% 60% 40% / 60% 32% 68% 40%; }
+  50%      { border-radius: 50% 50% 32% 68% / 40% 60% 50% 50%; }
+  75%      { border-radius: 70% 30% 48% 52% / 50% 50% 40% 60%; }
+}
+
+/* AI orb — slow rotation for the conic gradient backdrop */
+@keyframes blobRotate {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* AI orb — outer halo pulsing in / out */
+@keyframes blobGlow {
+  0%, 100% { opacity: 0.45; transform: scale(1); }
+  50%      { opacity: 0.85; transform: scale(1.18); }
+}
+
+/* AI orb — secondary inner pulse for depth */
+@keyframes blobInner {
+  0%, 100% { opacity: 0.6; transform: scale(0.9); }
+  50%      { opacity: 1;   transform: scale(1.05); }
+}
+
+/* Respect iPhone home indicator safe area */
+.safe-area-inset-bottom {
+  padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
 }
