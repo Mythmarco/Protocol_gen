@@ -9,6 +9,10 @@ const dmSans = DM_Sans({
 });
 
 export const metadata: Metadata = {
+  // Base absoluta para que las URLs relativas (og:image, etc.) se resuelvan
+  // a la URL pública. WhatsApp / iMessage / Twitter las necesitan absolutas
+  // para poder hacer fetch y mostrar la tarjeta de preview.
+  metadataBase: new URL("https://protocol-gen.stacklabs.life"),
   title: "Peptides4ALL – Protocolos",
   description: "Generador de protocolos de administración de péptidos",
   manifest: "/manifest.json",
@@ -16,6 +20,28 @@ export const metadata: Metadata = {
     capable: true,
     statusBarStyle: "default",
     title: "Protocolos",
+  },
+  openGraph: {
+    title: "Peptides4ALL – Protocolos",
+    description: "Generador de protocolos personalizados de péptidos",
+    url: "https://protocol-gen.stacklabs.life",
+    siteName: "Peptides4ALL",
+    locale: "es_MX",
+    type: "website",
+    images: [
+      {
+        url: "/og-image.png",
+        width: 1200,
+        height: 630,
+        alt: "Peptides4ALL — Generador de protocolos",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Peptides4ALL – Protocolos",
+    description: "Generador de protocolos personalizados de péptidos",
+    images: ["/og-image.png"],
   },
 };
 
