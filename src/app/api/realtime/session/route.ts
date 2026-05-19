@@ -42,8 +42,15 @@ export async function POST() {
         audio: {
           input: {
             format: { type: "audio/pcm", rate: 24000 },
-            turn_detection: { type: "semantic_vad" },
-            transcription: { model: "whisper-1" },
+            // OpenAI Realtime Prompting Guide (2026): eagerness "low" para
+            // voice agents customer-facing — espera más antes de cortar al
+            // usuario, ideal cuando el doctor dicta listas largas (péptidos,
+            // dosis). Default "medium" interrumpía la dictación.
+            turn_detection: { type: "semantic_vad", eagerness: "low" },
+            // gpt-realtime-whisper es el modelo streaming oficial que
+            // reemplaza whisper-1 desde la actualización audio de OpenAI
+            // de Nov 2025 — mejor latencia y precisión en español.
+            transcription: { model: "gpt-realtime-whisper" },
           },
           output: {
             format: { type: "audio/pcm", rate: 24000 },
