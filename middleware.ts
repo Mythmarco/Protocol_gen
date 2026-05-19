@@ -29,6 +29,13 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|icons|manifest.json|sw.js|workbox-.*\\.js).*)",
+    // Excluir:
+    //   - assets internos de Next (/_next/static, /_next/image)
+    //   - cualquier archivo con extensión estática (png, svg, ico, json, etc.)
+    //     en el root o subcarpetas. Esto cubre /og-image.png, /sw.js,
+    //     /manifest.json, /icons/*, /peptides-logo.svg, etc., sin tener que
+    //     listarlos uno por uno. Sin esto, scrapers como WhatsApp / iMessage
+    //     pidiendo la OG image son redirigidos a /login.
+    "/((?!_next/static|_next/image|.*\\.(?:png|jpe?g|gif|svg|webp|ico|json|js|txt|xml|woff2?|mp4)$).*)",
   ],
 };
