@@ -950,12 +950,21 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
   };
 
   const handleNewChat = () => {
-    setMessages([]);
-    setPendingProtocol(null);
-    setSavedSnapshot(null);
-    setInput("");
-    setVoiceTranscript([]);
-    setVoiceSeed(undefined);
+    // "Nuevo" = arrancar de cero. Volvemos a la landing hero para que el
+    // doctor reelija modo (texto/voz). Antes solo vaciábamos mensajes y
+    // dejaba al usuario en un empty state mudo — parecía que no había
+    // pasado nada al tocar el botón en PWA. Con la cross-fade se ve
+    // claramente el reset.
+    runViewTransition(() => {
+      setMessages([]);
+      setPendingProtocol(null);
+      setSavedSnapshot(null);
+      setInput("");
+      setVoiceTranscript([]);
+      setVoiceSeed(undefined);
+      setLandingShown(true);
+      setMobileSheet(null);
+    });
   };
 
   // ── Voice recording (Whisper via /api/transcribe) ──
