@@ -1,33 +1,48 @@
 "use client";
 
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { useEffect, useRef, type RefObject } from "react";
 
 // Audio-reactive waveform.
-//   - While `speaking` AND `externalAmpRef` provided: ignore mic, drive bars
-//     from the ref (parent feeds amplitude from session.on("audio") events).
-//   - Otherwise: WebAudio AnalyserNode on the user's mic.
 //
-// Why two modes: WebRTC remote audio streams can't be reliably analyzed in
-// Chrome (createMediaStreamSource often returns silence). Tapping the SDK's
-// PCM stream directly is much more reliable.
+// Arquitectura (lección aprendida vía investigación de patrones en
+// LiveKit Agents UI, wavtools, OpenAI realtime-console):
+//
+//   - Muestreo (analyser → bandas) corre en setInterval(33ms), DESACOPLADO
+//     del render. iOS Safari hace throttle de requestAnimationFrame a 30fps
+//     (peor en standalone PWA, ver WebKit bug 168837), así que si lees el
+//     analyser dentro del rAF obtienes jitter visual.
+//   - Render corre en su propio rAF y solo interpola + escribe directamente
+//     a `style.height` de los <div> de las barras via refs. No setState en
+//     el hot path → cero reconciliación de React.
+//   - Damping exponencial (factor 0.25) absorbe el jitter de iOS.
+//   - fftSize 512 + smoothing 0.55: balance probado para voz en móvil.
+//
+// Para output de IA (when `speaking` + `externalAmpRef`): el SDK de
+// @openai/agents emite chunks PCM via session.on("audio"); el parente
+// calcula amplitud y la pone en externalAmpRef. Aquí mantenemos un ring
+// buffer de las últimas 5 muestras para "fake-bands" convincentes sin
+// pagar el costo de FFT sobre PCM crudo.
 
 const COLORS = [
   "#3f3f46",
   "#27272a",
-  "#18181b", // center bar — bass dominates voice
+  "#18181b", // bar central — bass dominates voice
   "#27272a",
   "#3f3f46",
 ];
 
-const BAND_GAIN = [1.0, 1.05, 1.15, 1.35, 1.6];
-const NOISE_GATE = 16;
+const BAND_COUNT = 5;
 const SILENT_HEIGHT = 0.08;
-const LERP = 0.32;
+const DAMP = 0.25;            // damping del render — más alto = más sensible
+const NOISE_GATE = 14;        // <14 byte avg en el analyser → tratamos como silencio
+const BAND_GAIN = [1.0, 1.05, 1.15, 1.35, 1.55];
+const SAMPLE_INTERVAL_MS = 33; // ~30Hz, suficiente para voz en móvil
+const AI_AMP_BOOST = 7;       // mapea 0..0.15 RMS típico → 0..1 bar height
 
 interface Props {
   active: boolean;
   speaking: boolean;
-  externalAmpRef?: RefObject<number>; // 0..1 amplitude from the parent
+  externalAmpRef?: RefObject<number>; // 0..1 amplitud del PCM del AI
   size?: "sm" | "md" | "lg";
 }
 
@@ -37,63 +52,45 @@ export default function Waveform({
   externalAmpRef,
   size = "lg",
 }: Props) {
-  const [bars, setBars] = useState<number[]>(Array(5).fill(SILENT_HEIGHT));
-  const rafRef = useRef<number | null>(null);
+  // Refs a los <div> de las barras — escribimos directo a su style.
+  const barRefs = useRef<Array<HTMLDivElement | null>>(
+    Array(BAND_COUNT).fill(null)
+  );
+
+  // Estado interno SOLO en refs (no React state) para evitar reconciliación.
+  // `targetBands`: lo último muestreado del analyser / amp del AI.
+  // `displayBands`: lo que realmente está dibujado, interpolado con damping.
+  const targetBandsRef = useRef<number[]>(
+    Array(BAND_COUNT).fill(SILENT_HEIGHT)
+  );
+  const displayBandsRef = useRef<number[]>(
+    Array(BAND_COUNT).fill(SILENT_HEIGHT)
+  );
+  // Ring buffer de amplitudes recientes para repartir el audio del AI en
+  // múltiples "bandas" sin frequency-domain analysis.
+  const aiAmpRingRef = useRef<number[]>(Array(BAND_COUNT).fill(0));
+
+  // AudioContext + analyser para el mic.
   const audioCtxRef = useRef<AudioContext | null>(null);
   const micStreamRef = useRef<MediaStream | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const dataRef = useRef<Uint8Array | null>(null);
-  const debugFramesRef = useRef(0);
 
-  // External mode: when speaking + ref is provided, drive bars from the
-  // PCM amplitude the parent computes from session.on("audio") events.
-  useEffect(() => {
-    if (!active || !speaking || !externalAmpRef) return;
+  // Dimensiones por tamaño — se calculan una vez y se mantienen estables.
+  const containerHeight = size === "sm" ? 28 : size === "md" ? 40 : 56;
+  const barWidth = size === "sm" ? 3 : size === "md" ? 4 : 5;
 
-    console.log("[waveform] external mode (AI speaking via session.on(audio))");
-
-    const tick = () => {
-      const amp = externalAmpRef.current ?? 0;
-      // Distribute the single amplitude into 5 bars using phase-shifted
-      // sine waves so they pulse together but don't move in unison. Gives
-      // the natural "waveform" feel without needing per-frequency data.
-      const t = performance.now() / 1000;
-      const targets = COLORS.map((_, i) => {
-        const wave = 0.55 + 0.45 * Math.sin(t * (2.8 + i * 0.55) + i * 1.3);
-        // amp is 0..1 (mean abs of PCM16 / 32768). Voice levels are
-        // usually 0.02-0.15 → we boost ×7 to map to visible bar heights.
-        const peak = amp * 7 * wave;
-        return Math.max(SILENT_HEIGHT, Math.min(1, peak));
-      });
-
-      debugFramesRef.current++;
-      if (debugFramesRef.current % 60 === 0) {
-        console.log(`[waveform] tick avg(amp×100)=${(amp * 100).toFixed(1)} src=ai`);
-      }
-
-      setBars((prev) => prev.map((b, i) => b + (targets[i] - b) * LERP));
-      rafRef.current = requestAnimationFrame(tick);
-    };
-    debugFramesRef.current = 0;
-    rafRef.current = requestAnimationFrame(tick);
-
-    return () => {
-      if (rafRef.current != null) {
-        cancelAnimationFrame(rafRef.current);
-        rafRef.current = null;
-      }
-    };
-  }, [active, speaking, externalAmpRef]);
-
-  // Mic mode: when listening (or no external ref available)
+  // ── Sampling loop: corre cada SAMPLE_INTERVAL_MS, desacoplado del render.
+  //    Decide entre fuente AI (externalAmpRef) o mic (analyser).
   useEffect(() => {
     if (!active) return;
-    if (speaking && externalAmpRef) return; // external mode handles this
 
+    const usingAI = speaking && externalAmpRef;
+    let intervalId: ReturnType<typeof setInterval> | null = null;
     let cancelled = false;
 
-    async function setup() {
+    const setupMic = async () => {
       try {
         const Ctx =
           window.AudioContext ||
@@ -101,7 +98,9 @@ export default function Waveform({
             .webkitAudioContext;
         const ctx = audioCtxRef.current ?? new Ctx();
         audioCtxRef.current = ctx;
-        if (ctx.state === "suspended") await ctx.resume();
+        if (ctx.state === "suspended") {
+          await ctx.resume();
+        }
 
         const aliveMic = micStreamRef.current
           ?.getAudioTracks()
@@ -120,77 +119,160 @@ export default function Waveform({
 
         const source = ctx.createMediaStreamSource(micStreamRef.current!);
         const analyser = ctx.createAnalyser();
-        analyser.fftSize = 256;
-        analyser.smoothingTimeConstant = 0.78;
+        // fftSize 512 = 256 bins; suficiente para 5 bandas y barato en iOS.
+        analyser.fftSize = 512;
+        // smoothing alto = más latencia; 0.55 da respuesta inmediata sin saltar.
+        analyser.smoothingTimeConstant = 0.55;
         source.connect(analyser);
 
         sourceRef.current = source;
         analyserRef.current = analyser;
         dataRef.current = new Uint8Array(analyser.frequencyBinCount);
-        debugFramesRef.current = 0;
-
-        console.log(`[waveform] connected source=mic (speaking=${speaking})`);
-
-        const tick = () => {
-          if (!analyserRef.current || !dataRef.current) return;
-          analyserRef.current.getByteFrequencyData(
-            dataRef.current as Uint8Array<ArrayBuffer>
-          );
-          const data = dataRef.current;
-
-          let frameSum = 0;
-          const scanLen = Math.min(60, data.length);
-          for (let i = 1; i < scanLen; i++) frameSum += data[i];
-          const frameAvg = frameSum / (scanLen - 1);
-
-          debugFramesRef.current++;
-          if (debugFramesRef.current % 60 === 0) {
-            console.log(`[waveform] tick avg=${frameAvg.toFixed(1)} src=mic`);
-          }
-
-          let targets: number[];
-          if (frameAvg < NOISE_GATE) {
-            targets = Array(5).fill(SILENT_HEIGHT);
-          } else {
-            const groups = [
-              avg(data, 1, 3),
-              avg(data, 3, 7),
-              avg(data, 7, 14),
-              avg(data, 14, 26),
-              avg(data, 26, 46),
-            ];
-            targets = groups.map((g, i) => {
-              const gained = (g / 200) * BAND_GAIN[i];
-              const curved = Math.pow(gained, 0.75);
-              return Math.max(SILENT_HEIGHT, Math.min(1, curved));
-            });
-          }
-
-          setBars((prev) => prev.map((b, i) => b + (targets[i] - b) * LERP));
-          rafRef.current = requestAnimationFrame(tick);
-        };
-        rafRef.current = requestAnimationFrame(tick);
+        console.log("[waveform] mic source connected (fftSize=512)");
       } catch (err) {
         console.warn("[waveform] mic setup failed:", err);
       }
-    }
+    };
 
-    setup();
+    const sampleMic = () => {
+      if (!analyserRef.current || !dataRef.current) return;
+      // Cast workaround: el typing de getByteFrequencyData en algunas
+      // versiones de TS pide ArrayBuffer; nuestro Uint8Array está OK.
+      analyserRef.current.getByteFrequencyData(
+        dataRef.current as Uint8Array<ArrayBuffer>
+      );
+      const data = dataRef.current;
+
+      // Noise gate: si todo el frame está debajo del umbral, baja a silencio.
+      let frameSum = 0;
+      const scanLen = Math.min(60, data.length);
+      for (let i = 1; i < scanLen; i++) frameSum += data[i];
+      const frameAvg = frameSum / (scanLen - 1);
+
+      if (frameAvg < NOISE_GATE) {
+        for (let b = 0; b < BAND_COUNT; b++) {
+          targetBandsRef.current[b] = SILENT_HEIGHT;
+        }
+        return;
+      }
+
+      // 5 bandas log-spaced: bass, low-mid, mid, high-mid, high.
+      const ranges: [number, number][] = [
+        [1, 3],
+        [3, 7],
+        [7, 14],
+        [14, 26],
+        [26, 46],
+      ];
+      for (let b = 0; b < BAND_COUNT; b++) {
+        const [lo, hi] = ranges[b];
+        const end = Math.min(hi, data.length);
+        let s = 0;
+        let n = 0;
+        for (let i = lo; i < end; i++) {
+          s += data[i];
+          n++;
+        }
+        const avg = n ? s / n : 0;
+        const gained = (avg / 200) * BAND_GAIN[b];
+        const curved = Math.pow(gained, 0.75);
+        targetBandsRef.current[b] = Math.max(
+          SILENT_HEIGHT,
+          Math.min(1, curved)
+        );
+      }
+    };
+
+    const sampleAI = () => {
+      const amp = externalAmpRef?.current ?? 0;
+      // Rota el ring buffer: shift right + insertar nueva muestra en [0].
+      const ring = aiAmpRingRef.current;
+      for (let i = ring.length - 1; i > 0; i--) ring[i] = ring[i - 1];
+      ring[0] = amp;
+
+      // Mapea cada banda a una posición del ring. Bandas exteriores van más
+      // "tarde" — efecto de eco visual que se ve natural.
+      // Distribución: [centro_más_reciente, mid, edge, edge_más_lejano]
+      const ringIdx = [2, 1, 0, 1, 2];
+      for (let b = 0; b < BAND_COUNT; b++) {
+        const sample = ring[ringIdx[b]] ?? 0;
+        // amp típica del PCM (mean abs / 32768) está en 0..0.15. ×7 mapea a 0..1.
+        const h = sample * AI_AMP_BOOST;
+        targetBandsRef.current[b] = Math.max(
+          SILENT_HEIGHT,
+          Math.min(1, h)
+        );
+      }
+    };
+
+    if (usingAI) {
+      console.log("[waveform] external mode (AI PCM via session.on(audio))");
+      intervalId = setInterval(sampleAI, SAMPLE_INTERVAL_MS);
+    } else {
+      setupMic().then(() => {
+        if (cancelled) return;
+        intervalId = setInterval(sampleMic, SAMPLE_INTERVAL_MS);
+      });
+    }
 
     return () => {
       cancelled = true;
-      if (rafRef.current != null) {
-        cancelAnimationFrame(rafRef.current);
-        rafRef.current = null;
+      if (intervalId) clearInterval(intervalId);
+      // Reset targets a silencio para que el render baje las barras suave.
+      for (let b = 0; b < BAND_COUNT; b++) {
+        targetBandsRef.current[b] = SILENT_HEIGHT;
       }
-      try {
-        sourceRef.current?.disconnect();
-      } catch {}
-      sourceRef.current = null;
-      analyserRef.current = null;
-      dataRef.current = null;
+      aiAmpRingRef.current.fill(0);
+
+      // Solo desconectar mic resources si estábamos en mic mode.
+      if (!usingAI) {
+        try {
+          sourceRef.current?.disconnect();
+        } catch {}
+        sourceRef.current = null;
+        analyserRef.current = null;
+        dataRef.current = null;
+      }
     };
   }, [active, speaking, externalAmpRef]);
+
+  // ── Render loop: corre su propio rAF, solo interpola y muta el DOM
+  //    directamente. No re-renderiza React.
+  useEffect(() => {
+    if (!active) return;
+    let rafId: number | null = null;
+
+    const draw = () => {
+      const display = displayBandsRef.current;
+      const target = targetBandsRef.current;
+      for (let b = 0; b < BAND_COUNT; b++) {
+        display[b] += (target[b] - display[b]) * DAMP;
+        const node = barRefs.current[b];
+        if (node) {
+          const h = Math.max(barWidth, display[b] * containerHeight);
+          // Escribir en px directo evita layout thrashing por units.
+          node.style.height = h + "px";
+        }
+      }
+      rafId = requestAnimationFrame(draw);
+    };
+    rafId = requestAnimationFrame(draw);
+
+    return () => {
+      if (rafId != null) cancelAnimationFrame(rafId);
+    };
+  }, [active, barWidth, containerHeight]);
+
+  // Resume AudioContext cuando el PWA vuelve del background (iOS lo suspende).
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState === "visible") {
+        audioCtxRef.current?.resume().catch(() => {});
+      }
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, []);
 
   // Unmount cleanup
   useEffect(() => {
@@ -202,41 +284,27 @@ export default function Waveform({
     };
   }, []);
 
-  const containerHeight = size === "sm" ? 28 : size === "md" ? 40 : 56;
-  const barWidth = size === "sm" ? 3 : size === "md" ? 4 : 5;
-
   return (
     <div
       className="flex items-center justify-center gap-1.5"
       style={{ height: containerHeight }}
     >
-      {COLORS.map((color, i) => {
-        const h = bars[i] ?? SILENT_HEIGHT;
-        const heightPx = Math.max(barWidth, h * containerHeight);
-        return (
-          <div
-            key={i}
-            className="rounded-full"
-            style={{
-              width: barWidth,
-              height: heightPx,
-              background: `linear-gradient(180deg, ${color} 0%, #0a0a0a 50%, ${color} 100%)`,
-              transition: "height 80ms cubic-bezier(0.22, 1, 0.36, 1)",
-            }}
-          />
-        );
-      })}
+      {COLORS.map((color, i) => (
+        <div
+          key={i}
+          ref={(el) => {
+            barRefs.current[i] = el;
+          }}
+          className="rounded-full"
+          style={{
+            width: barWidth,
+            height: SILENT_HEIGHT * containerHeight,
+            background: `linear-gradient(180deg, ${color} 0%, #0a0a0a 50%, ${color} 100%)`,
+            transition: "height 60ms cubic-bezier(0.22, 1, 0.36, 1)",
+            willChange: "height",
+          }}
+        />
+      ))}
     </div>
   );
-}
-
-function avg(arr: Uint8Array, from: number, to: number): number {
-  let sum = 0;
-  let n = 0;
-  const end = Math.min(to, arr.length);
-  for (let i = from; i < end; i++) {
-    sum += arr[i];
-    n++;
-  }
-  return n ? sum / n : 0;
 }
