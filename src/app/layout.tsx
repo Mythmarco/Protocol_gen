@@ -34,7 +34,9 @@ export default function RootLayout({
   return (
     <html lang="es" className={`${dmSans.variable} h-full antialiased`}>
       <head>
-        <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+        {/* Next.js convention: src/app/icon.png and src/app/apple-icon.png
+            generate <link rel="icon"> and <link rel="apple-touch-icon">
+            automatically — no need to hand-write them here. */}
         <meta name="mobile-web-app-capable" content="yes" />
         <script
           dangerouslySetInnerHTML={{
