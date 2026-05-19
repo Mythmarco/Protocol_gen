@@ -13,6 +13,14 @@ const nextConfig: NextConfig = {
     "puppeteer-core",
     "puppeteer",
   ],
+  // Y además: decirle a Vercel que SÍ incluya el binario y los archivos
+  // .br de @sparticuz/chromium en el bundle de la función. Sin esto,
+  // serverExternalPackages evita que se compile pero el dir
+  // node_modules/@sparticuz/chromium/bin queda fuera del deploy y se
+  // produce "The input directory ... does not exist".
+  outputFileTracingIncludes: {
+    "/api/pdf": ["./node_modules/@sparticuz/chromium/bin/**/*"],
+  },
 };
 
 export default nextConfig;

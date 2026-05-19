@@ -1708,7 +1708,17 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
               </button>
             </div>
           </div>
-          <div className="flex-1 bg-stone-100 overflow-hidden relative">
+          <div
+            className="flex-1 bg-stone-100 relative overflow-auto"
+            style={{
+              // Permitir pan + pinch-zoom nativo del parent en iOS Safari.
+              // (En el iframe interno iOS ignora el viewport meta — así que
+              // dejamos que el iframe sea ancho fijo de A4 y el contenedor
+              // hace el scroll/pinch.)
+              WebkitOverflowScrolling: "touch",
+              touchAction: "pan-x pan-y pinch-zoom",
+            }}
+          >
             {/* Skeleton paper while iframe loads */}
             {previewLoading && (
               <div className="absolute inset-0 flex items-start justify-center pt-8 px-4 overflow-hidden pointer-events-none">
@@ -1733,13 +1743,25 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
               </div>
             )}
             {!previewLoading && (
-              <iframe
-                srcDoc={previewHTML}
-                title="Vista previa del protocolo"
-                className="w-full h-full bg-white"
-                sandbox="allow-same-origin"
-                style={{ animation: "fadeIn 250ms ease-out" }}
-              />
+              // iframe a ancho fijo de A4 (794px = 210mm @ 96dpi). En
+              // desktop el contenedor es más ancho → centrado natural; en
+              // móvil el contenedor hace scroll horizontal y el pinch-zoom
+              // del parent escala todo. Eso da el comportamiento que el
+              // doctor quiere: arranca en page-width, permite hacer zoom.
+              <div className="mx-auto" style={{ width: 794 }}>
+                <iframe
+                  srcDoc={previewHTML}
+                  title="Vista previa del protocolo"
+                  className="bg-white block"
+                  sandbox="allow-same-origin"
+                  style={{
+                    width: 794,
+                    height: "calc(100vh - 60px)",
+                    border: 0,
+                    animation: "fadeIn 250ms ease-out",
+                  }}
+                />
+              </div>
             )}
           </div>
         </div>
