@@ -724,7 +724,14 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
         }),
       });
 
-      if (!res.ok) throw new Error("Error generando PDF");
+      if (!res.ok) {
+        // Surface the real error so we can debug live issues instead of
+        // dumping the user at a useless "make sure the server is running".
+        const detail = await res.text().catch(() => "");
+        throw new Error(
+          `PDF API ${res.status} ${res.statusText}${detail ? ` — ${detail.slice(0, 200)}` : ""}`
+        );
+      }
 
       // Pull the folio + drive URL from headers we set server-side
       const folio = res.headers.get("X-Folio") || "";
@@ -766,7 +773,9 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
       }
     } catch (err) {
       console.error(err);
-      alert("Error generando el PDF. Verifica que el servidor esté corriendo.");
+      alert(
+        `No se pudo guardar el PDF.\n\n${err instanceof Error ? err.message : "Error desconocido."}\n\nRevisa que las variables de entorno estén configuradas en Vercel.`
+      );
     } finally {
       setIsGeneratingPDF(false);
     }

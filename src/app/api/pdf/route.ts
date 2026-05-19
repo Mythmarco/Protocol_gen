@@ -4,7 +4,48 @@ import { buildProtocolHTML } from "@/lib/protocol-template";
 import { ProtocoloData } from "@/lib/protocol-types";
 import { uploadPDFToDrive, isDriveConfigured } from "@/lib/drive";
 import { enrichProtocolMetadata } from "@/lib/metadata-enricher";
-import puppeteer from "puppeteer";
+import puppeteer from "puppeteer-core";
+import chromium from "@sparticuz/chromium";
+
+// Vercel: dame hasta 60s. Puppeteer+Drive+Supabase encadenados sobrepasan
+// fácil el default de 10s. (En plan Hobby el techo es 60s; en Pro 300s.)
+export const maxDuration = 60;
+// Forzar Node.js runtime — Edge no soporta Puppeteer.
+export const runtime = "nodejs";
+
+// Launch helper que funciona en Vercel (sparticuz/chromium serverless) y en
+// dev local (Chrome del sistema o el binario que `puppeteer` baja). El
+// binario full de `puppeteer` (~170MB) NO entra en el bundle de Vercel —
+// por eso el route fallaba en prod con "make sure the server is running".
+async function launchBrowser() {
+  if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
+    return puppeteer.launch({
+      args: chromium.args,
+      executablePath: await chromium.executablePath(),
+      headless: true,
+    });
+  }
+  // Local: usa la instalación de `puppeteer` (devDependency) si está
+  // disponible; si no, asume Chrome de macOS en su ruta canónica.
+  let execPath: string | undefined;
+  try {
+    const localPuppeteer = (await import("puppeteer")) as unknown as {
+      executablePath?: () => string;
+      default?: { executablePath?: () => string };
+    };
+    execPath =
+      localPuppeteer.executablePath?.() ??
+      localPuppeteer.default?.executablePath?.();
+  } catch {
+    /* puppeteer no instalado en este entorno */
+  }
+  return puppeteer.launch({
+    headless: true,
+    executablePath:
+      execPath || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    args: ["--no-sandbox", "--disable-setuid-sandbox"],
+  });
+}
 
 export async function POST(req: Request) {
   const session = await getSession();
@@ -55,10 +96,7 @@ export async function POST(req: Request) {
     doctor: { name: session.name ?? "", email: session.email },
   });
 
-  const browser = await puppeteer.launch({
-    headless: true,
-    args: ["--no-sandbox", "--disable-setuid-sandbox"],
-  });
+  const browser = await launchBrowser();
   const page = await browser.newPage();
   await page.setContent(html, { waitUntil: "load" });
   const pdf = await page.pdf({

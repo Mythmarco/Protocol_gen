@@ -158,12 +158,27 @@ function buildTools(
             items: {
               type: "object",
               additionalProperties: false,
-              required: ["nombre", "presentacion", "dosis_descripcion", "frecuencia_descripcion"],
+              required: [
+                "nombre",
+                "presentacion",
+                "dosis_descripcion",
+                "frecuencia_descripcion",
+                "unidades_jeringa",
+              ],
               properties: {
                 nombre: { type: "string", description: "p.ej. 'Retatrutida'" },
-                presentacion: { type: "string", description: "mg del vial, p.ej. '30 mg'" },
+                presentacion: {
+                  type: "string",
+                  description:
+                    "EXACTAMENTE los mg del vial que el doctor te dictó, p.ej. '15 mg' o '30 mg'. NO lo cambies aunque te parezca otra presentación más eficiente.",
+                },
                 dosis_descripcion: { type: "string", description: "Texto libre, p.ej. '8 mg por aplicación'" },
                 frecuencia_descripcion: { type: "string", description: "Frecuencia + días, p.ej. 'Una vez por semana, viernes' o 'Lunes a viernes'" },
+                unidades_jeringa: {
+                  type: "string",
+                  description:
+                    "Unidades de jeringa por aplicación, EXACTAMENTE como las dictó el doctor. Si dijo '50 unidades de Reta 15 mg', pon '50'. Si no especificó, pon '' (string vacío) y el motor las calcula.",
+                },
               },
             },
           },
@@ -335,11 +350,21 @@ Si el último audio es silencio, ruido de fondo, música, conversación lateral 
 # Entity Capture (CRÍTICO)
 Los siguientes datos son de alta precisión — confírmalos antes de cualquier write:
 - **Nombre del paciente**: si suena ambiguo, pide deletrear ("¿Me lo deletreas?").
-- **Dosis y unidades**: "Retatrutida 30 miligramos, ¿correcto?"
+- **Presentación del vial (mg)**: "¿Retatrutida de 15 o de 30 miligramos?" — esto es lo que el doctor DICE, no lo que diga el catálogo.
+- **Dosis por aplicación**: "¿8 mg por aplicación, correcto?"
+- **Unidades de jeringa**: si el doctor te dicta unidades específicas ("50 unidades de Reta 15 mg"), captúralas TAL CUAL en \`unidades_jeringa\`. No las recalcules.
 - **Frecuencia**: "5 días a la semana, lunes a viernes, ¿confirmas?"
 - **Moneda**: "¿MXN o USD?"
 
 Recoge UNA cosa a la vez. No preguntes "¿cuál es el nombre, peso, edad y estatura?" — pregunta uno y avanza.
+
+# Regla dura — Respeto a lo que dicta el doctor (CRÍTICO)
+NUNCA cambies la **presentación del vial** ni las **unidades de jeringa** que el doctor te dictó, aunque a ti te parezca que "es más eficiente" usar otra presentación.
+
+❌ MAL: Doctor dice "Reta de 15 mg, 50 unidades" → tú armas el protocolo con Reta de 30 mg, 25 unidades (mismo peso total pero presentación distinta).
+✅ BIEN: Doctor dice "Reta de 15 mg, 50 unidades" → \`presentacion: "15 mg"\`, \`unidades_jeringa: 50\`. PUNTO.
+
+Si el doctor te da una dosis en mg pero no especifica la presentación, ENTONCES sí preguntas: "¿De 15 mg o de 30 mg el vial?". Pero si ya te lo dijo, no lo cuestiones, no lo "optimices", no lo cambies.
 
 # Unclear Audio
 - Solo responde a audio claro.

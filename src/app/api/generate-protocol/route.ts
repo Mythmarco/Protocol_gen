@@ -40,7 +40,10 @@ export async function POST(req: Request) {
 REGLAS:
 - Usa get_peptide_info y get_product_price para CADA péptido y producto cotizable
 - NUNCA cotices jeringas
-- Calcula unidades de jeringa correctamente (vial mg / 2 mL = concentración, dosis_mg / concentración × 100 = unidades, redondear a múltiplo de 5)
+- **Presentación del vial (mg)**: si gathered.peptidos[i].presentacion viene con un valor concreto ("15 mg", "30 mg"), úsalo EXACTAMENTE. NUNCA lo cambies a otra presentación aunque te parezca más eficiente para los cálculos. El doctor lo dictó así.
+- **Unidades de jeringa**: si gathered.peptidos[i].unidades_jeringa viene con un valor (p.ej. "50"), úsalo TAL CUAL en el calendario y en \`peptidos.indicaciones\`. NO recalcules. Solo calcula tú las unidades cuando ese campo viene vacío.
+- Cuando SÍ tengas que calcular: vial mg / 2 mL = concentración, dosis_mg / concentración × 100 = unidades, redondear a múltiplo de 5.
+- La cotización debe usar la MISMA presentación que el doctor dictó (si dijo 15 mg, cotiza "Retatrutida 15 mg", no 30 mg).
 - Idioma del protocolo y moneda vienen en gathered.metadata.idioma / gathered.cotizacion.moneda
 - metadata.creado_por debe ser exactamente "${session.email}"
 - metadata.fecha = ${new Date().toISOString().slice(0, 10)}
