@@ -12,7 +12,7 @@
     "@anthropic-ai/sdk": "^0.96.0",
     "@ducanh2912/next-pwa": "^10.2.9",
     "@openai/agents": "^0.11.4",
-    "@sparticuz/chromium": "^148.0.0",
+    "@sparticuz/chromium-min": "^148.0.0",
     "@supabase/supabase-js": "^2.105.4",
     "bcryptjs": "^3.0.3",
     "googleapis": "^171.4.0",

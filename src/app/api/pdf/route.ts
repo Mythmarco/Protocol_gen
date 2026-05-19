@@ -5,7 +5,7 @@ import { ProtocoloData } from "@/lib/protocol-types";
 import { uploadPDFToDrive, isDriveConfigured } from "@/lib/drive";
 import { enrichProtocolMetadata } from "@/lib/metadata-enricher";
 import puppeteer from "puppeteer-core";
-import chromium from "@sparticuz/chromium";
+import chromium from "@sparticuz/chromium-min";
 
 // Vercel: dame hasta 60s. Puppeteer+Drive+Supabase encadenados sobrepasan
 // fácil el default de 10s. (En plan Hobby el techo es 60s; en Pro 300s.)
@@ -13,15 +13,21 @@ export const maxDuration = 60;
 // Forzar Node.js runtime — Edge no soporta Puppeteer.
 export const runtime = "nodejs";
 
-// Launch helper que funciona en Vercel (sparticuz/chromium serverless) y en
-// dev local (Chrome del sistema o el binario que `puppeteer` baja). El
-// binario full de `puppeteer` (~170MB) NO entra en el bundle de Vercel —
-// por eso el route fallaba en prod con "make sure the server is running".
+// URL remota del binario empaquetado de Chromium. Patrón recomendado de
+// Sparticuz para Vercel: el binario NO se bundlea con el deploy (eso
+// causaba el error "bin directory does not exist"), se descarga desde
+// GitHub al primer cold start y se cachea en /tmp para invocaciones
+// siguientes. La versión del tarball DEBE coincidir con la del paquete
+// @sparticuz/chromium-min instalado.
+const CHROMIUM_PACK_URL =
+  process.env.CHROMIUM_PACK_URL ||
+  "https://github.com/Sparticuz/chromium/releases/download/v148.0.0/chromium-v148.0.0-pack.x64.tar";
+
 async function launchBrowser() {
   if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
     return puppeteer.launch({
       args: chromium.args,
-      executablePath: await chromium.executablePath(),
+      executablePath: await chromium.executablePath(CHROMIUM_PACK_URL),
       headless: true,
     });
   }

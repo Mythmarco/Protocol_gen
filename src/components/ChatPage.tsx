@@ -681,7 +681,52 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
     }
   };
 
+  // Detección barata de "esto es un móvil" — usamos viewport width porque
+  // iOS Safari miente con userAgent y `matchMedia('(pointer:coarse)')` no
+  // es 100% confiable en simuladores. 768px coincide con el breakpoint
+  // md: de Tailwind y es donde aparece el bottom-nav.
+  const isMobileViewport = () =>
+    typeof window !== "undefined" && window.innerWidth < 768;
+
   const openPreview = async (protocol: ProtocoloData) => {
+    // En móvil, el iframe-modal tiene problemas conocidos con pinch-zoom
+    // (iOS Safari ignora el viewport meta dentro de iframes), así que
+    // abrimos el HTML como pestaña nativa de Safari donde el zoom funciona.
+    // En desktop seguimos con el modal.
+    if (isMobileViewport()) {
+      // Abrir la pestaña INMEDIATAMENTE — si la abrimos después del await
+      // Safari la bloquea como popup (solo permite window.open dentro del
+      // gesture-handler de un click).
+      const tab = window.open("", "_blank");
+      if (tab) {
+        tab.document.write(
+          '<!doctype html><html><body style="margin:0;font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;color:#888"><p>Cargando vista previa…</p></body></html>'
+        );
+      }
+      try {
+        const res = await fetch("/api/preview", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ protocolData: protocol }),
+        });
+        if (!res.ok) throw new Error("preview failed");
+        const html = await res.text();
+        if (tab) {
+          tab.document.open();
+          tab.document.write(html);
+          tab.document.close();
+        }
+      } catch (err) {
+        console.error(err);
+        if (tab) {
+          tab.document.body.innerHTML =
+            "<p style='padding:2rem;font-family:sans-serif'>No se pudo cargar la vista previa.</p>";
+        }
+      }
+      return;
+    }
+
+    // Desktop: modal con iframe (zoom no es problema en monitor)
     setPreviewOpen(true);
     setPreviewLoading(true);
     setPreviewHTML("");
