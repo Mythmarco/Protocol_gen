@@ -75,7 +75,7 @@ function injectMobilePreviewCloseButton(html: string): string {
     right: 0;
     display: flex;
     justify-content: flex-end;
-    padding: 10px 14px;
+    padding: 14px 18px;
     z-index: 999999;
     pointer-events: none;
   }
@@ -83,23 +83,25 @@ function injectMobilePreviewCloseButton(html: string): string {
     pointer-events: auto;
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    background: rgba(20,20,20,0.85);
+    gap: 9px;
+    min-height: 50px;
+    background: rgba(20,20,20,0.9);
     color: #fff;
     border: none;
     border-radius: 999px;
-    padding: 9px 16px 9px 12px;
-    font: 600 14px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-    box-shadow: 0 6px 16px rgba(0,0,0,0.18), 0 0 0 1px rgba(255,255,255,0.08);
+    padding: 13px 22px 13px 18px;
+    font: 700 17px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    letter-spacing: -0.01em;
+    box-shadow: 0 10px 24px rgba(0,0,0,0.25), 0 0 0 1px rgba(255,255,255,0.08);
     -webkit-tap-highlight-color: transparent;
     cursor: pointer;
   }
-  .p4a-close-btn:active { transform: scale(0.96); }
+  .p4a-close-btn:active { transform: scale(0.96); background: rgba(0,0,0,0.95); }
   .p4a-close-btn svg { display: block; }
 </style>
 <div class="p4a-close-bar">
   <button class="p4a-close-btn" onclick="window.close(); setTimeout(function(){ history.back(); }, 60); return false;">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
     Cerrar
   </button>
 </div>`;

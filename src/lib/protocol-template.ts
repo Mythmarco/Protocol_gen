@@ -227,10 +227,12 @@ export function buildProtocolHTML(data: ProtocoloData, options: BuildOptions = {
 <html lang="${L.htmlLang}">
 <head>
   <meta charset="UTF-8"/>
-  <!-- width=794 = ancho de A4 a 96dpi. Fija el viewport "virtual" al ancho
-       de la hoja para que el navegador móvil escale automáticamente a
-       fit-page-width al abrir, y permita pinch-zoom desde ahí. -->
-  <meta name="viewport" content="width=794, user-scalable=yes, maximum-scale=5.0, initial-scale=1.0"/>
+  <!-- width=794 = ancho de A4 a 96dpi. SIN initial-scale a propósito —
+       Safari/Chrome calculan initial-scale = device-width / 794 para que la
+       página arranque ajustada al ancho de pantalla. Si forzamos
+       initial-scale=1 la página empieza al 100% (más ancha que el celular)
+       y el usuario tiene que pinch-out para ver el contenido completo. -->
+  <meta name="viewport" content="width=794, user-scalable=yes, maximum-scale=5.0, minimum-scale=0.3"/>
   <title>${paciente.nombre} | Peptides4ALL</title>
   <style>
     :root{--brand-dark:#504d4d;--brand-gold:#f2b056;--brand-gold-deep:#d9943f;--brand-gold-light:#f8d9a0;--brand-silver:#b2b0ae;--brand-warm-gray:#d7d5d3;--brand-off-white:#f8f7f6;--ink:#2f2d2d;--muted:#6b6868;--ok:#0f766e;--warning:#9a3412}
