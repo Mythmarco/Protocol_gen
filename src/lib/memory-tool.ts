@@ -34,11 +34,32 @@ export const MEMORY_TOOL: Anthropic.Tool = {
   },
 };
 
+// PostgREST `.or()` parses commas/parens/colons as filter syntax — un
+// término del modelo con esos chars (o un patrón malicioso) podría romper la
+// query o ensanchar el matching más allá del usuario actual. Mantenemos solo
+// letras/dígitos/espacios/acentos/guiones, que es lo que un nombre de
+// paciente o palabra clave clínica realmente necesita para ilike.
+function sanitizeSearchQuery(q: string): string {
+  return q
+    .replace(new RegExp("[^\\p{L}\\p{N}\\s\\-]", "gu"), " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export async function executeMemoryTool(
   input: { query: string; limit?: number },
   userId: string
 ) {
   if (!input?.query) return { error: "missing query", results: [] };
+
+  const q = sanitizeSearchQuery(input.query);
+  if (!q) {
+    return {
+      results: [],
+      count: 0,
+      note: "La búsqueda quedó vacía después de remover caracteres especiales.",
+    };
+  }
 
   const limit = Math.min(Math.max(input.limit ?? 5, 1), 20);
   const supabase = createAdminClient();
@@ -47,7 +68,7 @@ export async function executeMemoryTool(
     .from("protocolos")
     .select("id, paciente_nombre, descripcion, datos_json, drive_url, fecha_creacion")
     .eq("creado_por", userId)
-    .or(`paciente_nombre.ilike.%${input.query}%,descripcion.ilike.%${input.query}%`)
+    .or(`paciente_nombre.ilike.%${q}%,descripcion.ilike.%${q}%`)
     .order("fecha_creacion", { ascending: false })
     .limit(limit);
 

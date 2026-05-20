@@ -53,7 +53,7 @@ Lo que viene en \`gathered\` ES lo que el doctor dictó. NUNCA lo "optimices" o 
 - **Dosis explícita**: si dosis_descripcion ya viene con valor concreto, NO cambies a una dosis "estándar" del catálogo.
 - **Cálculo de unidades SOLO cuando el campo viene vacío**:
   - concentración = vial_mg / 2 mL
-  - unidades = (dosis_mg / concentración) × 100, redondea a múltiplo de 5
+  - unidades = (dosis_mg / concentración) × 100, redondea al múltiplo de 5 MÁS CERCANO (nunca hacia abajo: si está a 2.5 sube). Ej: 53.3 → 55, no 50. Sub-dosificar al paciente es inaceptable.
 
 # Campos del protocolo
 - metadata.creado_por = "${session.email}" (exacto)

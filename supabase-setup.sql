@@ -84,8 +84,13 @@ as $$
   select 'P4A-' || nextval('public.protocolos_folio_seq')::text;
 $$;
 
--- Allow the service role + PostgREST to call the RPC
-grant execute on function public.next_protocol_folio() to service_role, anon, authenticated;
+-- Allow ONLY service_role to call the RPC. El backend /api/pdf usa el
+-- service-role key (admin client). NUNCA queremos que la anon key pueda
+-- quemar la secuencia desde afuera. Si en algún punto el front directo
+-- necesita folios, crear un endpoint del backend que valide sesión antes
+-- de llamar el RPC — no abrir el grant.
+revoke execute on function public.next_protocol_folio() from anon, authenticated;
+grant execute on function public.next_protocol_folio() to service_role;
 
 -- ── 8. Indexes ──
 create index if not exists protocolos_creado_por_fecha

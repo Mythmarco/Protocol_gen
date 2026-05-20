@@ -4,8 +4,36 @@ import { buildProtocolHTML } from "@/lib/protocol-template";
 import { ProtocoloData } from "@/lib/protocol-types";
 import { uploadPDFToDrive, isDriveConfigured } from "@/lib/drive";
 import { enrichProtocolMetadata } from "@/lib/metadata-enricher";
-import puppeteer from "puppeteer-core";
+import puppeteer, { type Browser, type Page } from "puppeteer-core";
 import chromium from "@sparticuz/chromium-min";
+import { z } from "zod";
+
+// Zod schema mínimo de lo que /api/pdf REALMENTE lee del body. La forma
+// completa de ProtocoloData la garantiza Structured Outputs del modelo —
+// aquí solo guardamos los campos que el server toca directamente, para
+// rechazar payloads malformed que harían crashear el render o ensuciar
+// la columna `datos_json` de Supabase.
+const PDF_REQUEST_SCHEMA = z.object({
+  protocolData: z
+    .object({
+      paciente: z.object({ nombre: z.string().min(1).max(200) }).passthrough(),
+      metadata: z.object({}).passthrough(),
+      protocolo: z.object({ titulo: z.string().min(1).max(500) }).passthrough(),
+      cotizacion: z.object({}).passthrough(),
+    })
+    .passthrough(),
+  conversacion: z
+    .array(
+      z.object({
+        role: z.enum(["user", "assistant"]),
+        content: z.string(),
+      })
+    )
+    .max(500) // tope defensivo contra payloads gigantes
+    .optional(),
+  conversacion_modo: z.enum(["text", "voice"]).optional(),
+  mode: z.enum(["save", "download"]).optional(),
+});
 
 // Vercel: dame hasta 60s. Puppeteer+Drive+Supabase encadenados sobrepasan
 // fácil el default de 10s. (En plan Hobby el techo es 60s; en Pro 300s.)
@@ -57,20 +85,33 @@ export async function POST(req: Request) {
   const session = await getSession();
   if (!session) return new Response("Unauthorized", { status: 401 });
 
-  const {
-    protocolData,
-    conversacion,
-    conversacion_modo,
-    mode,
-  } = (await req.json()) as {
-    protocolData: ProtocoloData;
-    conversacion?: Array<{ role: "user" | "assistant"; content: string }>;
-    conversacion_modo?: "text" | "voice";
-    // "save"     → reserve folio + upload to Drive + insert row (default)
-    // "download" → just render the PDF and return it; no side effects.
-    //              Used to re-download a protocol that was already archived.
-    mode?: "save" | "download";
-  };
+  // Parse + validate. Si el body es JSON inválido o no matchea el schema,
+  // 400 inmediato. Sin validación, un cliente podía mandar {} y reventar
+  // el server, o inyectar cualquier objeto a `datos_json` de Supabase.
+  let rawBody: unknown;
+  try {
+    rawBody = await req.json();
+  } catch {
+    return new Response("Invalid JSON body", { status: 400 });
+  }
+
+  const parsed = PDF_REQUEST_SCHEMA.safeParse(rawBody);
+  if (!parsed.success) {
+    const firstIssue = parsed.error.issues[0];
+    const path = firstIssue?.path.join(".") || "body";
+    console.warn(
+      `[pdf] body validation failed at ${path}: ${firstIssue?.message}`
+    );
+    return new Response(
+      `Invalid body: ${path} — ${firstIssue?.message || "validation error"}`,
+      { status: 400 }
+    );
+  }
+
+  // El cast es seguro: zod ya validó la forma mínima. Los campos extra de
+  // ProtocoloData están en passthrough, así que están presentes en runtime.
+  const protocolData = parsed.data.protocolData as unknown as ProtocoloData;
+  const { conversacion, conversacion_modo, mode } = parsed.data;
   const downloadOnly = mode === "download";
 
   // ── 0. Enrich metadata server-side (today's date, doctor email) ──
@@ -102,18 +143,25 @@ export async function POST(req: Request) {
     doctor: { name: session.name ?? "", email: session.email },
   });
 
+  // Render PDF con cleanup robusto: cerramos page Y browser explícitamente,
+  // ponemos timeouts agresivos para que un hung navigation no chupe los 60s
+  // completos del function (matando otras requests en cold-warm scenarios).
   let pdf: Uint8Array;
-  let browser: Awaited<ReturnType<typeof launchBrowser>> | null = null;
+  let browser: Browser | null = null;
+  let page: Page | null = null;
   try {
     console.log("[pdf] launching browser…");
     browser = await launchBrowser();
     console.log("[pdf] browser launched, rendering page");
-    const page = await browser.newPage();
-    await page.setContent(html, { waitUntil: "load" });
+    page = await browser.newPage();
+    page.setDefaultNavigationTimeout(30_000);
+    page.setDefaultTimeout(30_000);
+    await page.setContent(html, { waitUntil: "load", timeout: 30_000 });
     pdf = await page.pdf({
       format: "A4",
       printBackground: true,
       margin: { top: 0, right: 0, bottom: 0, left: 0 },
+      timeout: 30_000,
     });
     console.log(`[pdf] rendered ${pdf.byteLength} bytes`);
   } catch (err) {
@@ -121,7 +169,10 @@ export async function POST(req: Request) {
     console.error("[pdf] puppeteer failure:", detail, err);
     return new Response(`Puppeteer error: ${detail}`, { status: 500 });
   } finally {
-    try { await browser?.close(); } catch {}
+    // Cerrar page primero, después browser. Errores los suprimimos pero
+    // los logueamos a debug para detectar leaks de zombie chromium.
+    try { await page?.close(); } catch (e) { console.warn("[pdf] page.close warn:", e); }
+    try { await browser?.close(); } catch (e) { console.warn("[pdf] browser.close warn:", e); }
   }
 
   // ── 3. Build filename: folio + patient + date ──
@@ -145,6 +196,10 @@ export async function POST(req: Request) {
   }
 
   // ── 4. Upload to Drive (best-effort) ──
+  // Rastreamos fallos en una lista para devolverlos al cliente. NUNCA
+  // mentimos sobre el estado del save: si Drive O Supabase fallan, el
+  // cliente verá un toast de warning en lugar del verde de éxito.
+  const saveErrors: string[] = [];
   let driveUrl: string | null = null;
   if (isDriveConfigured()) {
     try {
@@ -155,7 +210,9 @@ export async function POST(req: Request) {
       });
       console.log(`[pdf] uploaded to Drive: ${driveUrl}`);
     } catch (err) {
-      console.error("[pdf] Drive upload failed:", err);
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[pdf] Drive upload failed for folio=${folio}:`, msg, err);
+      saveErrors.push(`Drive: ${msg}`);
     }
   } else {
     console.log("[pdf] Drive not configured — skipping upload");
@@ -186,19 +243,31 @@ export async function POST(req: Request) {
     .maybeSingle();
 
   if (insertError) {
-    console.error("[pdf] Supabase insert failed (full error):", JSON.stringify(insertError, null, 2));
+    console.error(
+      `[pdf] Supabase insert FAILED — folio=${folio} drive_url=${driveUrl ?? "null"} ` +
+        `paciente="${protocolData.paciente.nombre}". MANUAL_RECONCILIATION_NEEDED. Error:`,
+      JSON.stringify(insertError, null, 2)
+    );
+    saveErrors.push(`Supabase: ${insertError.message}`);
   } else {
     console.log(`[pdf] saved to Supabase id=${inserted?.id} folio=${folio}`);
   }
 
+  const saveStatus = saveErrors.length === 0 ? "ok" : "failed";
   return new Response(pdf.buffer as ArrayBuffer, {
     headers: {
       "Content-Type": "application/pdf",
       "Content-Disposition": `attachment; filename="${fileName}"`,
-      // Surface metadata the client uses for the success toast
       "X-Folio": folio,
       "X-Drive-Url": driveUrl ?? "",
-      "Access-Control-Expose-Headers": "X-Folio, X-Drive-Url",
+      // El cliente lee X-Save-Status: si != "ok", muestra toast de warning
+      // en lugar de éxito y opcionalmente lee X-Save-Error para mostrar el
+      // motivo. Devolvemos el PDF igual — el doctor lo tiene en su mano,
+      // pero le decimos honestamente que NO se archivó.
+      "X-Save-Status": saveStatus,
+      "X-Save-Error": saveErrors.join(" | "),
+      "Access-Control-Expose-Headers":
+        "X-Folio, X-Drive-Url, X-Save-Status, X-Save-Error",
     },
   });
 }

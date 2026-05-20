@@ -75,7 +75,7 @@ export default function RootLayout({
           }}
         />
       </head>
-      <body className="min-h-full flex flex-col font-[var(--font-dm-sans)]">
+      <body className="min-h-full flex flex-col font-sans">
         {children}
       </body>
     </html>

@@ -110,8 +110,10 @@ Devuelve protocolos pasados con todos sus datos (péptidos, dosis, calendario, c
 - Cálculo de unidades para jeringa de 0.5 mL (U-100):
   - Concentración tras reconstituir con 2 mL: [mg_vial / 2] mg/mL
   - Unidades = (dosis_mg / concentración_mg_por_mL) × 100
-  - Ejemplo: Retatrutide 30 mg vial + 2 mL → 15 mg/mL. Dosis 8 mg → 8/15 × 100 = 53 u ≈ **50 u**
-  - Ejemplo: MOTS-c 20 mg vial + 2 mL → 10 mg/mL. Dosis 2 mg → 2/10 × 100 = **20 u**
+  - **Redondeo**: al múltiplo de 5 MÁS CERCANO (no hacia abajo). Si está exactamente a 2.5, redondea HACIA ARRIBA — nunca sub-doses al paciente.
+  - Ejemplo: Retatrutide 30 mg vial + 2 mL → 15 mg/mL. Dosis 8 mg → 8/15 × 100 = 53.3 u → **55 u** (redondeo al múltiplo de 5 más cercano).
+  - Ejemplo: MOTS-c 20 mg vial + 2 mL → 10 mg/mL. Dosis 2 mg → 2/10 × 100 = **20 u** (ya es múltiplo de 5).
+  - Ejemplo: Retatrutide 15 mg vial + 2 mL → 7.5 mg/mL. Dosis 3.75 mg → 3.75/7.5 × 100 = **50 u** (exacto).
 - Vía subcutánea para todos los péptidos salvo indicación explícita
 
 ## Formato del calendario semanal

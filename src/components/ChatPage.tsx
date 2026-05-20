@@ -554,12 +554,41 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewHTML, setPreviewHTML] = useState<string>("");
   const [previewLoading, setPreviewLoading] = useState(false);
-  // Toast shown after a successful PDF save (auto-dismisses)
+  // Toast — soporta tres estados:
+  //   "ok"      → verde, "Protocolo guardado · folio · Abrir en Drive"
+  //   "warning" → ámbar, el PDF se renderizó pero NO se archivó en BD/Drive
+  //   "error"   → rojo, el render mismo falló (reemplaza al alert viejo)
+  // Auto-dismiss después de unos segundos.
   const [toast, setToast] = useState<{
+    status: "ok" | "warning" | "error";
     folio: string;
     driveUrl: string;
+    message?: string;
     visible: boolean;
   } | null>(null);
+
+  // Helper para mostrar el toast con auto-dismiss. Centraliza los timeouts.
+  const showToast = useCallback(
+    (
+      status: "ok" | "warning" | "error",
+      payload: { folio?: string; driveUrl?: string; message?: string }
+    ) => {
+      const dwell = status === "ok" ? 6000 : 9000; // errores dejan más tiempo
+      setToast({
+        status,
+        folio: payload.folio ?? "",
+        driveUrl: payload.driveUrl ?? "",
+        message: payload.message,
+        visible: true,
+      });
+      window.setTimeout(
+        () => setToast((t) => (t ? { ...t, visible: false } : null)),
+        dwell
+      );
+      window.setTimeout(() => setToast(null), dwell + 400);
+    },
+    []
+  );
   // Voice
   const [recState, setRecState] = useState<"idle" | "recording" | "transcribing">("idle");
   const [recError, setRecError] = useState<string | null>(null);
@@ -831,9 +860,15 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
         );
       }
 
-      // Pull the folio + drive URL from headers we set server-side
+      // Headers que el server expone con CORS:
+      //   X-Folio        → folio asignado
+      //   X-Drive-Url    → URL en Drive (vacío si no se subió)
+      //   X-Save-Status  → "ok" | "failed"  (NEW)
+      //   X-Save-Error   → detalle si failed (NEW)
       const folio = res.headers.get("X-Folio") || "";
       const driveUrl = res.headers.get("X-Drive-Url") || "";
+      const saveStatus = res.headers.get("X-Save-Status") || "ok";
+      const saveError = res.headers.get("X-Save-Error") || "";
 
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
@@ -847,33 +882,42 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
       a.click();
       URL.revokeObjectURL(url);
 
-      // Show success toast (auto-dismiss after 6s)
-      setToast({ folio, driveUrl, visible: true });
-      setTimeout(() => setToast((t) => (t ? { ...t, visible: false } : null)), 6000);
-      setTimeout(() => setToast(null), 6400); // unmount after fade-out
-
-      // Flip the UI into "archived" mode for this protocol — Guardar PDF
-      // becomes Descargar, and the top toolbar hides until the doctor edits.
-      setSavedSnapshot({
-        datos_json: pendingProtocol,
-        folio,
-        driveUrl: driveUrl || null,
-      });
+      if (saveStatus === "ok") {
+        showToast("ok", { folio, driveUrl });
+        // El protocolo SÍ se archivó → flip a estado "archivado"
+        setSavedSnapshot({
+          datos_json: pendingProtocol,
+          folio,
+          driveUrl: driveUrl || null,
+        });
+      } else {
+        // El PDF se generó pero algo del archivado falló (Drive o Supabase).
+        // El doctor ya tiene el PDF descargado, pero NO marcamos como archivado.
+        showToast("warning", {
+          folio,
+          message: saveError || "El protocolo no se guardó en Drive/BD.",
+        });
+      }
 
       // Close the preview modal — user saw it before saving, no need to keep it
       setPreviewOpen(false);
 
-      // Refresh history sidebar
-      const histRes = await fetch("/api/history");
-      if (histRes.ok) {
-        const { items } = (await histRes.json()) as { items: HistoryItem[] };
-        setHistory(items);
+      // Refresh history sidebar (solo si se guardó OK; si falló no hay row nuevo)
+      if (saveStatus === "ok") {
+        const histRes = await fetch("/api/history");
+        if (histRes.ok) {
+          const { items } = (await histRes.json()) as { items: HistoryItem[] };
+          setHistory(items);
+        }
       }
     } catch (err) {
       console.error(err);
-      alert(
-        `No se pudo guardar el PDF.\n\n${err instanceof Error ? err.message : "Error desconocido."}\n\nRevisa que las variables de entorno estén configuradas en Vercel.`
-      );
+      showToast("error", {
+        message:
+          err instanceof Error
+            ? err.message
+            : "Error desconocido al guardar el PDF.",
+      });
     } finally {
       setIsGeneratingPDF(false);
     }
@@ -894,7 +938,12 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
           mode: "download",
         }),
       });
-      if (!res.ok) throw new Error("download failed");
+      if (!res.ok) {
+        const detail = await res.text().catch(() => "");
+        throw new Error(
+          `PDF API ${res.status}${detail ? ` — ${detail.slice(0, 200)}` : ""}`
+        );
+      }
 
       const folio = res.headers.get("X-Folio") || savedSnapshot.folio || "";
       const blob = await res.blob();
@@ -910,7 +959,12 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
       URL.revokeObjectURL(url);
     } catch (err) {
       console.error(err);
-      alert("No se pudo descargar el PDF.");
+      showToast("error", {
+        message:
+          err instanceof Error
+            ? err.message
+            : "No se pudo descargar el PDF.",
+      });
     } finally {
       setIsDownloading(false);
     }
@@ -1739,43 +1793,95 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
         </div>
       )}
 
-      {/* Save-success toast (top-center, auto-dismisses) */}
-      {toast && (
-        <div
-          className="fixed top-4 left-1/2 -translate-x-1/2 z-[60] pointer-events-none"
-          style={{
-            opacity: toast.visible ? 1 : 0,
-            transform: `translateX(-50%) translateY(${toast.visible ? 0 : -8}px)`,
-            transition: "opacity 350ms ease-out, transform 350ms ease-out",
-          }}
-        >
-          <div className="bg-stone-900 text-white rounded-2xl shadow-2xl px-4 py-3 flex items-center gap-3 max-w-md pointer-events-auto">
-            <div className="w-8 h-8 rounded-full bg-green-500 flex items-center justify-center flex-shrink-0">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="20 6 9 17 4 12" />
-              </svg>
-            </div>
-            <div className="flex-1 text-sm">
-              <div className="font-semibold">
-                Protocolo guardado · {toast.folio || "—"}
+      {/* Toast (top-center, auto-dismisses). Variantes: ok / warning / error.
+           Reemplaza al alert() viejo que en iOS PWA se veía fatal y bloqueaba. */}
+      {toast && (() => {
+        const variant =
+          toast.status === "ok"
+            ? {
+                iconBg: "bg-green-500",
+                title: `Protocolo guardado · ${toast.folio || "—"}`,
+                body: "Registrado en la base y descargado.",
+                icon: (
+                  <polyline points="20 6 9 17 4 12" />
+                ),
+              }
+            : toast.status === "warning"
+            ? {
+                iconBg: "bg-amber-500",
+                title: `PDF generado · ${toast.folio || "—"}`,
+                body:
+                  toast.message ||
+                  "El PDF se descargó pero NO se archivó en la base.",
+                icon: (
+                  <>
+                    <path d="M12 9v4" />
+                    <path d="M12 17h.01" />
+                    <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                  </>
+                ),
+              }
+            : {
+                iconBg: "bg-red-500",
+                title: "No se pudo guardar el PDF",
+                body: toast.message || "Error desconocido.",
+                icon: (
+                  <>
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="12" y1="8" x2="12" y2="12" />
+                    <line x1="12" y1="16" x2="12.01" y2="16" />
+                  </>
+                ),
+              };
+
+        return (
+          <div
+            className="fixed top-4 left-1/2 -translate-x-1/2 z-[60] pointer-events-none px-4"
+            style={{
+              opacity: toast.visible ? 1 : 0,
+              transform: `translateX(-50%) translateY(${toast.visible ? 0 : -8}px)`,
+              transition: "opacity 350ms ease-out, transform 350ms ease-out",
+            }}
+          >
+            <div className="bg-stone-900 text-white rounded-2xl shadow-2xl px-4 py-3 flex items-center gap-3 max-w-md pointer-events-auto">
+              <div className={`w-8 h-8 rounded-full ${variant.iconBg} flex items-center justify-center flex-shrink-0`}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                  {variant.icon}
+                </svg>
               </div>
-              <div className="text-xs text-stone-300">
-                Registrado en la base y descargado.{" "}
-                {toast.driveUrl && (
-                  <a
-                    href={toast.driveUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="underline hover:text-amber-300"
-                  >
-                    Abrir en Drive
-                  </a>
-                )}
+              <div className="flex-1 text-sm min-w-0">
+                <div className="font-semibold truncate">{variant.title}</div>
+                <div className="text-xs text-stone-300 break-words">
+                  {variant.body}
+                  {toast.status === "ok" && toast.driveUrl && (
+                    <>
+                      {" "}
+                      <a
+                        href={toast.driveUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="underline hover:text-amber-300"
+                      >
+                        Abrir en Drive
+                      </a>
+                    </>
+                  )}
+                </div>
               </div>
+              <button
+                onClick={() => setToast(null)}
+                className="text-stone-400 hover:text-white transition-colors flex-shrink-0 p-1 -mr-1"
+                aria-label="Cerrar notificación"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Preview modal — smooth fade-in + skeleton page while iframe loads */}
       {previewOpen && (
