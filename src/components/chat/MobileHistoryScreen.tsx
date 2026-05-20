@@ -82,8 +82,14 @@ export default function MobileHistoryScreen({ items, onClose, onPick }: Props) {
 
   return (
     <div
-      className="md:hidden fixed inset-0 z-50 bg-white flex flex-col"
-      style={{ animation: "slideUp 240ms cubic-bezier(0.22, 1, 0.36, 1)" }}
+      // z-[60] para asegurar que cubre TODO incluyendo el bottom-nav móvil
+      // (que en algunos viewports iOS standalone seguía visible con z-50).
+      className="md:hidden fixed inset-0 z-[60] bg-white flex flex-col"
+      style={{
+        animation: "slideUp 240ms cubic-bezier(0.22, 1, 0.36, 1)",
+        paddingTop: "env(safe-area-inset-top)",
+        paddingBottom: "env(safe-area-inset-bottom)",
+      }}
     >
       {/* Sticky header */}
       <header className="flex items-center gap-2 px-2 py-3 border-b border-stone-200 bg-white/95 backdrop-blur-md sticky top-0 z-10">

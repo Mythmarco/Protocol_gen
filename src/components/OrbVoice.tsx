@@ -45,16 +45,19 @@ interface OrbVoiceProps {
   outputLevelRef?: RefObject<number>;
 }
 
-// Paleta por estado — RGB normalizados (0-1) para GLSL.
+// Paleta por estado — RGB 0-1 para GLSL. Saturación REAL para que el orb
+// destaque visiblemente contra el fondo cream (#f5f3f1) del app. La versión
+// anterior usaba grises casi-blancos que se confundían con el fondo y
+// hacían parecer que el orb era estático.
 const COLORS: Record<OrbState, { a: [number, number, number]; b: [number, number, number] }> = {
-  // Idle: gris cálido, sutil. Sin actividad.
-  idle:      { a: [0.85, 0.83, 0.79], b: [0.95, 0.94, 0.91] },
-  // Listening (doctor habla): cyan → blanco. "Recibiendo".
-  listening: { a: [0.49, 0.83, 0.99], b: [1.00, 1.00, 1.00] },
-  // Speaking (IA responde): ámbar → coral (paleta de la marca). Cálido.
-  speaking:  { a: [0.95, 0.69, 0.34], b: [0.98, 0.81, 0.49] },
-  // Thinking: gris azulado, contemplativo.
-  thinking:  { a: [0.58, 0.65, 0.72], b: [0.80, 0.83, 0.87] },
+  // Idle: ámbar cálido suave → platino. Visible pero no agresivo.
+  idle:      { a: [0.95, 0.69, 0.34], b: [0.66, 0.66, 0.69] },
+  // Listening (doctor habla): cyan profundo → cyan claro. "Recibiendo".
+  listening: { a: [0.22, 0.65, 0.92], b: [0.62, 0.86, 1.00] },
+  // Speaking (IA responde): ámbar cálido → coral (paleta marca). Activo.
+  speaking:  { a: [0.95, 0.55, 0.20], b: [0.98, 0.78, 0.42] },
+  // Thinking: violeta-azulado → lavanda. Contemplativo, diferenciado.
+  thinking:  { a: [0.42, 0.40, 0.78], b: [0.72, 0.71, 0.94] },
 };
 
 // Vertex shader: simplex noise 3D adaptado de https://github.com/ashima/webgl-noise (MIT).
@@ -96,10 +99,12 @@ float snoise(vec3 v){
 
 void main() {
   vec3 pos = position;
-  // Slow base breathing (idle aesthetic) + amplitude-driven displacement.
+  // Base displacement = noise * (idle floor + amp). Idle floor de 0.12 da
+  // movimiento visible sin audio. Amp-driven hasta 0.45 = orb dramático al
+  // hablar (era 0.06+0.35 antes, muy sutil para verse a distancia).
   float noiseScale = 1.6 + uAmp * 0.4;
-  float n = snoise(pos * noiseScale + uTime * 0.35);
-  float disp = n * (0.06 + uAmp * 0.35);
+  float n = snoise(pos * noiseScale + uTime * 0.45);
+  float disp = n * (0.12 + uAmp * 0.45);
   vec3 displaced = pos + normal * disp;
   vDisp = disp;
   vNormal = normalize(normalMatrix * normal);
@@ -191,8 +196,11 @@ function OrbMesh({ state, inputLevelRef, outputLevelRef }: OrbMeshProps) {
       outputLevelRef?.current ?? 0
     );
     if (state === "thinking" || state === "idle") {
+      // Fake amplitude para idle/thinking — orb "respira" sin audio.
+      // Subido de 0.18-0.30 a 0.35-0.55 para que el movimiento sea
+      // claramente visible (la sutilidad anterior parecía estatico).
       idleAmpClock.current += delta;
-      const fake = 0.18 + 0.12 * Math.sin(idleAmpClock.current * 1.6);
+      const fake = 0.45 + 0.18 * Math.sin(idleAmpClock.current * 1.6);
       targetAmp = Math.max(targetAmp, fake);
     }
     dampedAmp.current += (targetAmp - dampedAmp.current) * 0.15;
@@ -215,7 +223,9 @@ function OrbMesh({ state, inputLevelRef, outputLevelRef }: OrbMeshProps) {
     );
 
     if (meshRef.current) {
-      const scale = 1.0 + dampedAmp.current * 0.08;
+      // Más rango de escala (1.0 → 1.15) para que el "latido" del orb se
+      // perciba sin necesidad de mirar fijo.
+      const scale = 1.0 + dampedAmp.current * 0.15;
       meshRef.current.scale.setScalar(scale);
     }
   });

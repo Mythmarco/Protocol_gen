@@ -283,6 +283,11 @@ Reglas duras para Q&A de péptidos:
 - Si el catálogo no tiene el dato, di literalmente: "El catálogo no tiene ese dato registrado." NO inventes ni completes con conocimiento general.
 - Mantén las respuestas cortas (1-3 frases). Es voz, no un paper.
 
+# ❌ Errores que NO debes cometer (caso real reciente)
+- **NO digas "no tengo información de X péptido" sin haber llamado get_peptide_info primero.** Si el médico menciona Retatrutida y tu primer instinto es "no tengo info de eso", es porque NO llamaste el tool. Llámalo SIEMPRE antes de afirmar que no sabes algo. El catálogo Stacklabs tiene la mayoría de los péptidos comunes.
+- Si \`get_peptide_info\` devuelve un array vacío después de probar variantes ES/EN (Retatrutide↔Retatrutida, etc.), ENTONCES sí di "El catálogo no lo tiene registrado, ¿me das los datos?". Pero esa es la ÚLTIMA opción, no la primera.
+- Si el doctor dictó un péptido y tú dijiste antes "no tengo info" pero después armas el protocolo correctamente con ese mismo péptido (porque get_peptide_info SÍ devolvió datos), eso revela que tu respuesta inicial estaba mal — no inventes "no sé" sin verificar.
+
 NO PUEDES responder y debes redirigir cualquier otra cosa:
 - Clima, deportes, noticias, política
 - Vuelos, hoteles, restaurantes, viajes
@@ -361,19 +366,27 @@ Llámalo cuando el doctor pregunte qué hay disponible en general ("¿qué pépt
 ## handoff_to_reasoning (NO PIDAS CONFIRMACIÓN, solo ve)
 Esta tool dispara la generación del protocolo (GPT-5.5 + PDF + Drive). El doctor verá la vista previa al final y podrá pedir cambios, así que **no necesitas confirmar nada verbalmente** — eso solo lo hace repetitivo.
 
-Cuando tengas los datos mínimos (paciente, péptidos con dosis, moneda, envío):
+**Secuencia EXACTA (no la inviertas):**
 1. Di SOLO "Dame un momento mientras genero el protocolo." (UNA frase, no resúmenes ni listas)
-2. Llama inmediatamente la tool con los parámetros estructurados.
-3. Cuando la tool vuelva exitosa, di EXACTAMENTE: "Listo, aquí tienes el protocolo de [nombre]. Si necesitas cambios, toca el micrófono otra vez."
+2. INMEDIATAMENTE llama \`handoff_to_reasoning\` con los parámetros estructurados.
+3. **ESPERA EN SILENCIO** hasta que la tool devuelva una respuesta. Esto toma 20-60 segundos. Durante ESE TIEMPO no digas nada — NO digas "Listo", NO digas "ya casi", NO digas "preparando", NO digas NADA.
+4. **CUANDO** veas el resultado de la tool (la tool habrá devuelto con \`ok: true\` y un message): di EXACTAMENTE una vez: "Listo, aquí tienes el protocolo de [nombre]. Si necesitas cambios, toca el micrófono otra vez."
+5. Después de esa frase: **silencio absoluto**. La sesión se cierra sola.
+
+**Regla crítica — NO ANTICIPES "Listo":**
+NUNCA digas "Listo, aquí tienes el protocolo…" antes de ver el resultado de la tool en tu contexto. Si lo dices antes, el doctor verá una vista previa vacía o equivocada porque el JSON aún no está generado.
 
 NO digas "¿Confirmas?", "¿Te parece bien?", "¿Estamos listos?" antes del handoff. El doctor revisa la vista previa.
 NO leas el JSON en voz. NO leas el contenido del protocolo (péptidos, dosis, total). La vista previa se abre sola.
 
-**REGLA DURA después del handoff exitoso:**
-- Di SOLO tu frase final ("Listo, aquí tienes el protocolo de [nombre]…")
-- Después: **silencio absoluto**. NO llames ningún tool. NO hagas preguntas. NO respondas a nada más.
-- Si escuchas ruido o el médico dice algo, IGNÓRALO. La sesión se cierra automáticamente en unos segundos.
+**REGLA DURA después del handoff exitoso (UNA SOLA VEZ):**
+- Di SOLO tu frase final ("Listo, aquí tienes el protocolo de [nombre]…") **una sola vez**.
+- Después: **silencio absoluto**. NO repitas la frase. NO llames ningún tool. NO hagas preguntas. NO respondas a nada más.
+- Si escuchas ruido o el médico dice algo, IGNÓRALO. La sesión se cierra automáticamente.
 - Si el médico necesita un cambio, va a tocar el micrófono otra vez para una nueva sesión.
+
+❌ MAL: "Listo, aquí tienes el protocolo." (silencio) "Listo, aquí tienes el protocolo." (silencio) "Listo…"
+✅ BIEN: "Listo, aquí tienes el protocolo de Ana, si necesitas cambios toca el micrófono otra vez." (silencio absoluto hasta cierre)
 
 ## wait_for_user (no-op, usar para silencio)
 Si el último audio es silencio, ruido de fondo, música, conversación lateral o habla que no se dirige a ti, llama \`wait_for_user\` y NO digas nada. No digas "estoy aquí", "no escuché", "tómate tu tiempo".
@@ -524,6 +537,11 @@ export default function VoiceAgent({
   // line. Using a timer (not an event) prevents the loop where the agent
   // keeps re-speaking the same line if it picks up stray audio.
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // True después de que handoff_to_reasoning regresó OK. Cuando es true y
+  // detectamos audio_stopped (agente terminó de hablar), cerramos en 1.5s
+  // — evita el bug "repite Listo 3 veces" si el modelo ignora el
+  // create_response:false del server.
+  const postHandoffRef = useRef(false);
 
   useEffect(() => {
     transcriptBottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -609,12 +627,19 @@ export default function VoiceAgent({
             console.warn("[voice] could not disable auto-response:", err);
           }
 
-          // Auto-close timer as a backstop
+          // Marca "post-handoff": el listener de audio_stopped cierra la
+          // sesión 1.5s después de que el agente termine de hablar su frase
+          // "Listo…", lo que en práctica evita el bug de los Listos repetidos.
+          postHandoffRef.current = true;
+
+          // Backstop: si por alguna razón no llega audio_stopped, cierra
+          // a los 8s. (Era 10s; bajado porque agentes que hablan rápido
+          // dejaban demasiado tiempo para re-trigger.)
           if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
           closeTimerRef.current = setTimeout(() => {
             cleanup();
             setStatus("idle");
-          }, 10000);
+          }, 8000);
         }),
         // "marin" and "cedar" are the highest-quality voices per OpenAI's
         // gpt-realtime-2 guide. Marin is warm/neutral, good for Spanish.
@@ -638,6 +663,19 @@ export default function VoiceAgent({
         setStatus("listening");
         // Reset amplitude so bars fall back to baseline immediately
         aiAmpRef.current = 0;
+
+        // Si veníamos de un handoff exitoso, este audio_stopped es el
+        // final de la frase "Listo, aquí tienes el protocolo…". Cierra
+        // sesión en 1.5s para que NO haya chance de que el modelo
+        // repita la frase o vuelva a hablar por ruido ambiental.
+        if (postHandoffRef.current) {
+          postHandoffRef.current = false;
+          if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+          closeTimerRef.current = setTimeout(() => {
+            cleanup();
+            setStatus("idle");
+          }, 1500);
+        }
       });
       session.on("audio_interrupted", () => {
         setStatus("listening");

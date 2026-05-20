@@ -49,12 +49,12 @@ export const viewport: Viewport = {
   themeColor: "#d9943f",
   width: "device-width",
   initialScale: 1,
-  // Antes estaba en `maximumScale: 1` para "look de app", pero eso bloquea
-  // pinch-zoom en TODA la app, incluyendo la vista previa del PDF dentro del
-  // iframe — donde el doctor SÍ necesita poder hacer zoom para revisar
-  // dosis y números chicos antes de guardar.
   maximumScale: 5,
   userScalable: true,
+  // viewportFit:"cover" hace que el viewport se extienda DEBAJO del notch
+  // y home indicator. Sin esto las CSS env(safe-area-inset-*) devuelven 0
+  // y el header de la PWA queda cortado bajo el status bar de iOS.
+  viewportFit: "cover",
 };
 
 export default function RootLayout({

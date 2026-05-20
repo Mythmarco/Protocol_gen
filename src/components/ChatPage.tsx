@@ -864,7 +864,14 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
       {/* Main area */}
       <div className="flex flex-col flex-1 min-w-0">
         {/* Top bar */}
-        <header className="flex items-center gap-3 px-4 py-3 bg-white border-b border-stone-200">
+        <header
+          className="flex items-center gap-3 px-4 py-3 bg-white border-b border-stone-200"
+          style={{
+            // PWA standalone en iOS necesita reservar espacio bajo el notch.
+            // Sin esto el logo queda parcialmente tapado por el status bar.
+            paddingTop: "max(0.75rem, env(safe-area-inset-top))",
+          }}
+        >
           <button
             onClick={() => setSidebarOpen((o) => !o)}
             className="hidden md:block p-1.5 rounded-lg hover:bg-stone-100 transition-colors text-stone-500"
@@ -1322,8 +1329,12 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
         </div>
         {/* /view swap wrapper */}
 
-        {/* Bottom nav (mobile only) */}
-        <nav className="md:hidden flex items-center justify-around bg-white border-t border-stone-200 px-2 py-2 safe-area-inset-bottom">
+        {/* Bottom nav (mobile only). Se OCULTA cuando hay un sheet/historial
+             abierto para evitar overlap visual y para que iOS no muestre el
+             nav debajo del modal por z-index gotchas. */}
+        <nav
+          className={`md:hidden ${mobileSheet ? "hidden" : "flex"} items-center justify-around bg-white border-t border-stone-200 px-2 py-2 safe-area-inset-bottom`}
+        >
           <button
             onClick={handleNewChat}
             className="flex flex-col items-center gap-0.5 px-4 py-1.5 rounded-lg active:bg-stone-100 transition-colors"
