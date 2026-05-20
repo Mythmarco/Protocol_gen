@@ -1,51 +1,30 @@
 "use client";
 
-/* eslint-disable react-hooks/set-state-in-effect, react-hooks/refs */
-// React 19 lint rules sobre "no mutar después de render" / "no acceder refs
-// en render" no aplican aquí: useFrame de R3F corre FUERA del ciclo de
-// render de React (es el rAF loop interno de three.js). Mutar uniforms y
-// pasar uniformsRef.current al ShaderMaterial es el patrón intencional de
-// R3F desde hace 5 años. Disable es justificado y aislado a este archivo.
+// Audio-reactive voice orb. Visualmente IDÉNTICO al AIOrb del home
+// (CSS-only morphing blob) pero con dos cosas extra:
+//
+//   1) Paleta cambia según el estado del agente (idle/listening/speaking/
+//      thinking). Cada estado tiene gradiente propio (ámbar, cyan, naranja
+//      vibrante, violeta).
+//
+//   2) Reactividad de audio: un rAF loop lee inputLevelRef y outputLevelRef
+//      (poblados por useVoiceLevels) y actualiza inline styles del blob/
+//      halo (scale, opacity, animation-duration). Esto crea movimiento
+//      EXAGERADO pero suave que coincide con el habla — el blob "respira"
+//      con la voz del doctor o de la IA, no con un timer abstracto.
+//
+// ¿Por qué CSS-only y no R3F como antes? El doctor reportó que la versión
+// shader se veía "fea" y prefiere el look del home (blob morph orgánico).
+// CSS también elimina ~180KB de three.js del bundle de voz.
 
-// Audio-reactive AI orb (R3F + GLSL shader).
-//
-// Visual = una IcosahedronGeometry con vertex displacement controlado por
-// simplex noise + amplitud RMS. Fragment shader pinta un gradiente radial
-// con fresnel rim. Mismo orb para todos los estados; solo cambian los
-// colores via uniforms que interpolamos suavemente al cambiar de state.
-//
-// Patrón inspirado en ElevenLabs Orb, Vapi y Gemini Live — consenso 2026
-// para voice agents: un solo orb que reemplaza a "orb + waveform" separados.
-//
-// IMPORTANTE — anti-spike:
-// El bug "se ven picos angulares" venía de displacement alto (0.73 max) con
-// noise de alta frecuencia (pos * 2.8). Cada vértice tirado lejos de la
-// esfera, en direcciones distintas, generaba spikes radiales visibles en
-// la silueta. La fix es noise de BAJA frecuencia (bultos grandes, sin
-// puntos) y displacement máximo bajo (0.25). El orb sigue "respirando"
-// pero los bultos son suaves, tipo nube de plasma, no espinas.
-//
-// Performance: sampling de amplitud NUNCA ocurre aquí — lo hace el hook
-// useVoiceLevels desacoplado del rAF. useFrame solo lee refs y escribe
-// uniforms (sin setState → sin re-render React).
-
-import { Canvas, useFrame } from "@react-three/fiber";
-import { useRef, type RefObject } from "react";
-import * as THREE from "three";
+import { useEffect, useRef, type RefObject } from "react";
 
 export type OrbState = "idle" | "listening" | "speaking" | "thinking";
 
 interface OrbVoiceProps {
-  /**
-   * Tamaño en px del canvas (orb llena ~70% del canvas para dejar aire
-   * suficiente al respirar).
-   */
   size?: number;
   className?: string;
-  /**
-   * Estado actual del agente. Solo afecta colores; la geometría reacciona
-   * a inputLevelRef/outputLevelRef.
-   */
+  /** Estado actual del agente — define la paleta de colores. */
   state?: OrbState;
   /** Amplitud del mic 0-1 (poblada por useVoiceLevels). */
   inputLevelRef?: RefObject<number>;
@@ -53,222 +32,49 @@ interface OrbVoiceProps {
   outputLevelRef?: RefObject<number>;
 }
 
-// Paleta por estado — RGB 0-1 para GLSL. Saturación REAL para que el orb
-// destaque visiblemente contra el fondo cream (#f5f3f1) del app.
-const COLORS: Record<OrbState, { a: [number, number, number]; b: [number, number, number] }> = {
-  // Idle: ámbar cálido suave → platino. Visible pero no agresivo.
-  idle:      { a: [0.95, 0.69, 0.34], b: [0.66, 0.66, 0.69] },
-  // Listening (doctor habla): cyan profundo → cyan claro. "Recibiendo".
-  listening: { a: [0.22, 0.65, 0.92], b: [0.62, 0.86, 1.00] },
-  // Speaking (IA responde): ámbar cálido → coral (paleta marca). Activo.
-  speaking:  { a: [0.95, 0.55, 0.20], b: [0.98, 0.78, 0.42] },
-  // Thinking: violeta-azulado → lavanda. Contemplativo, diferenciado.
-  thinking:  { a: [0.42, 0.40, 0.78], b: [0.72, 0.71, 0.94] },
+// Gradientes por estado. La estructura es la misma — solo cambian los
+// colores. Mantenemos el patrón amber→intermedio→neutro del home para que
+// se sienta "la misma marca" en cada estado.
+//   - haloGrad: conic gradient del halo blureado (5 stops)
+//   - blobGrad: lineal del blob central
+//   - shadowAmber/shadowCool: glow colorido del box-shadow
+const PALETTES: Record<
+  OrbState,
+  {
+    halo: string;
+    blob: string;
+    shadow1: string;
+    shadow2: string;
+  }
+> = {
+  idle: {
+    halo: "conic-gradient(from 0deg, #f2b056, #ffe2b8, #c9c9cf, #f2b056, #e8e8ed, #f2b056)",
+    blob: "linear-gradient(135deg, #f2b056 0%, #d9943f 45%, #a8a8b0 100%)",
+    shadow1: "rgba(242, 176, 86, 0.35)",
+    shadow2: "rgba(168, 168, 176, 0.40)",
+  },
+  listening: {
+    // Doctor habla: cyan + cielo + blanco. Frío, "recibiendo".
+    halo: "conic-gradient(from 0deg, #4fbcff, #aee3ff, #d9f1ff, #4fbcff, #e5f3ff, #4fbcff)",
+    blob: "linear-gradient(135deg, #4fbcff 0%, #3a8fd6 45%, #b6d8ee 100%)",
+    shadow1: "rgba(79, 188, 255, 0.40)",
+    shadow2: "rgba(58, 143, 214, 0.35)",
+  },
+  speaking: {
+    // IA habla: naranja vibrante + ámbar + coral. Activo, cálido.
+    halo: "conic-gradient(from 0deg, #ff8a3d, #ffc079, #ffe2b8, #ff8a3d, #ffd1a3, #ff8a3d)",
+    blob: "linear-gradient(135deg, #ff8a3d 0%, #e0671b 45%, #f2b056 100%)",
+    shadow1: "rgba(255, 138, 61, 0.45)",
+    shadow2: "rgba(224, 103, 27, 0.35)",
+  },
+  thinking: {
+    // Pensando: violeta + magenta + lavanda. Contemplativo.
+    halo: "conic-gradient(from 0deg, #8a6bd1, #c2a8ee, #e8defc, #8a6bd1, #d9c6f5, #8a6bd1)",
+    blob: "linear-gradient(135deg, #8a6bd1 0%, #6a48b8 45%, #c2a8ee 100%)",
+    shadow1: "rgba(138, 107, 209, 0.40)",
+    shadow2: "rgba(106, 72, 184, 0.35)",
+  },
 };
-
-// Vertex shader: simplex noise 3D adaptado de https://github.com/ashima/webgl-noise (MIT).
-// Displacement orgánico SUAVE — bultos grandes, no espinas.
-const vertexShader = /* glsl */ `
-varying vec3 vNormal;
-varying vec3 vViewDir;
-varying float vDisp;
-
-uniform float uTime;
-uniform float uAmp;
-
-vec3 mod289(vec3 x){return x-floor(x*(1.0/289.0))*289.0;}
-vec4 mod289(vec4 x){return x-floor(x*(1.0/289.0))*289.0;}
-vec4 permute(vec4 x){return mod289(((x*34.0)+1.0)*x);}
-vec4 taylorInvSqrt(vec4 r){return 1.79284291400159-0.85373472095314*r;}
-float snoise(vec3 v){
-  const vec2 C=vec2(1.0/6.0,1.0/3.0); const vec4 D=vec4(0.0,0.5,1.0,2.0);
-  vec3 i=floor(v+dot(v,C.yyy)); vec3 x0=v-i+dot(i,C.xxx);
-  vec3 g=step(x0.yzx,x0.xyz); vec3 l=1.0-g; vec3 i1=min(g.xyz,l.zxy); vec3 i2=max(g.xyz,l.zxy);
-  vec3 x1=x0-i1+C.xxx; vec3 x2=x0-i2+C.yyy; vec3 x3=x0-D.yyy;
-  i=mod289(i);
-  vec4 p=permute(permute(permute(i.z+vec4(0.0,i1.z,i2.z,1.0))+i.y+vec4(0.0,i1.y,i2.y,1.0))+i.x+vec4(0.0,i1.x,i2.x,1.0));
-  float n_=0.142857142857; vec3 ns=n_*D.wyz-D.xzx;
-  vec4 j=p-49.0*floor(p*ns.z*ns.z);
-  vec4 x_=floor(j*ns.z); vec4 y_=floor(j-7.0*x_);
-  vec4 x=x_*ns.x+ns.yyyy; vec4 y=y_*ns.x+ns.yyyy; vec4 h=1.0-abs(x)-abs(y);
-  vec4 b0=vec4(x.xy,y.xy); vec4 b1=vec4(x.zw,y.zw);
-  vec4 s0=floor(b0)*2.0+1.0; vec4 s1=floor(b1)*2.0+1.0;
-  vec4 sh=-step(h,vec4(0.0));
-  vec4 a0=b0.xzyw+s0.xzyw*sh.xxyy; vec4 a1=b1.xzyw+s1.xzyw*sh.zzww;
-  vec3 p0=vec3(a0.xy,h.x); vec3 p1=vec3(a0.zw,h.y); vec3 p2=vec3(a1.xy,h.z); vec3 p3=vec3(a1.zw,h.w);
-  vec4 norm=taylorInvSqrt(vec4(dot(p0,p0),dot(p1,p1),dot(p2,p2),dot(p3,p3)));
-  p0*=norm.x; p1*=norm.y; p2*=norm.z; p3*=norm.w;
-  vec4 m=max(0.6-vec4(dot(x0,x0),dot(x1,x1),dot(x2,x2),dot(x3,x3)),0.0);
-  m=m*m; return 42.0*dot(m*m,vec4(dot(p0,x0),dot(p1,x1),dot(p2,x2),dot(p3,x3)));
-}
-
-void main() {
-  vec3 pos = position;
-  // Noise de BAJA frecuencia → bultos grandes y suaves (tipo nube), no
-  // espinas. Dos octavas pero la segunda muy bajada (0.15 vs 0.5 antes)
-  // para que la silueta no muestre detalles finos.
-  float t = uTime;
-  float n1 = snoise(pos * 0.9 + t * 0.35);
-  float n2 = snoise(pos * 1.7 + t * 0.55) * 0.15;
-  float n  = n1 + n2;
-  // Displacement MUY contenido — antes era 0.18+0.55*uAmp (max 0.73 en
-  // amplitud 1.0). Ahora 0.05+0.20*uAmp (max 0.25). 3x menor pero sigue
-  // siendo claramente visible. Esto es lo que mata los picos.
-  float disp = n * (0.05 + uAmp * 0.20);
-  vec3 displaced = pos + normal * disp;
-  vDisp = disp;
-  vNormal = normalize(normalMatrix * normal);
-  vec4 mv = modelViewMatrix * vec4(displaced, 1.0);
-  vViewDir = normalize(-mv.xyz);
-  gl_Position = projectionMatrix * mv;
-}
-`;
-
-const fragmentShader = /* glsl */ `
-precision highp float;
-varying vec3 vNormal;
-varying vec3 vViewDir;
-varying float vDisp;
-
-uniform vec3 uColorA;
-uniform vec3 uColorB;
-uniform float uAmp;
-
-void main() {
-  // Dos fresnels: uno para la transición de color (suave), otro para el
-  // alpha de borde (decay más agresivo para que el orb se funda con el
-  // fondo sin línea visible — el patrón de ElevenLabs/Pi).
-  float ndv = max(dot(vNormal, vViewDir), 0.0);
-  float fresnelColor = pow(1.0 - ndv, 2.2);
-  float fresnelEdge = pow(1.0 - ndv, 4.5);
-
-  // Transición de color centro → borde, modulada por amplitud para que el
-  // brillo del rim crezca al hablar.
-  vec3 base = mix(uColorA, uColorB, fresnelColor);
-  vec3 glow = vec3(1.0) * fresnelColor * (0.30 + uAmp * 0.45);
-  vec3 col = base + glow * 0.55;
-  col += vec3(vDisp * 0.6); // realza zonas con bulto positivo → look "nube"
-
-  // Alpha decae fuerte en el borde extremo. Sin línea hard del mesh.
-  // Centro semi-translúcido (0.92) para look "vidrio iridiscente".
-  float alpha = 0.92 - fresnelEdge * 0.55;
-  gl_FragColor = vec4(col, alpha);
-}
-`;
-
-// Mutación IN-PLACE (no devuelve array nuevo). React 19 lint se queja si
-// reasignamos `ref.current = [...]` en cada frame; mutar el array existente
-// es semánticamente igual (ref values son mutables por diseño).
-function lerp3InPlace(
-  out: [number, number, number],
-  to: [number, number, number],
-  t: number
-): void {
-  out[0] += (to[0] - out[0]) * t;
-  out[1] += (to[1] - out[1]) * t;
-  out[2] += (to[2] - out[2]) * t;
-}
-
-interface OrbMeshProps {
-  state: OrbState;
-  inputLevelRef?: RefObject<number>;
-  outputLevelRef?: RefObject<number>;
-}
-
-function OrbMesh({ state, inputLevelRef, outputLevelRef }: OrbMeshProps) {
-  const meshRef = useRef<THREE.Mesh>(null);
-  // Refs (no useMemo) — los uniforms se mutan cada frame y el React 19 lint
-  // prohíbe mutar resultados de useMemo. Refs son explicitly mutables.
-  const uniformsRef = useRef({
-    uTime: { value: 0 },
-    uAmp: { value: 0 },
-    uColorA: {
-      value: new THREE.Color(
-        COLORS.idle.a[0],
-        COLORS.idle.a[1],
-        COLORS.idle.a[2]
-      ),
-    },
-    uColorB: {
-      value: new THREE.Color(
-        COLORS.idle.b[0],
-        COLORS.idle.b[1],
-        COLORS.idle.b[2]
-      ),
-    },
-  });
-  const dampedAmp = useRef(0);
-  const dampedColorA = useRef<[number, number, number]>([...COLORS.idle.a]);
-  const dampedColorB = useRef<[number, number, number]>([...COLORS.idle.b]);
-  const idleAmpClock = useRef(0);
-
-  // useFrame corre FUERA del render de React — es el rAF loop de R3F.
-  // Mutar uniforms y refs aquí es el patrón intencional; el lint
-  // react-hooks/set-state-in-effect no entiende esta API y reporta falsos
-  // positivos. Lo silenciamos con justificación documentada.
-  // eslint-disable-next-line react-hooks/set-state-in-effect
-  useFrame((_, delta) => {
-    let targetAmp = Math.max(
-      inputLevelRef?.current ?? 0,
-      outputLevelRef?.current ?? 0
-    );
-    if (state === "thinking" || state === "idle") {
-      // Fake amplitude para idle/thinking — orb "respira" sin audio.
-      // Bajado a 0.40±0.18 (era 0.55±0.25): respiración tranquila, no
-      // espasmódica. Con el displacement nuevo (0.20 max) esto produce
-      // bultos visibles pero suaves.
-      idleAmpClock.current += delta;
-      const t = idleAmpClock.current;
-      const fake = 0.40 + 0.15 * Math.sin(t * 1.4) + 0.04 * Math.sin(t * 3.5);
-      targetAmp = Math.max(targetAmp, fake);
-    }
-    dampedAmp.current += (targetAmp - dampedAmp.current) * 0.15;
-
-    const tgt = COLORS[state];
-    lerp3InPlace(dampedColorA.current, tgt.a, 0.06);
-    lerp3InPlace(dampedColorB.current, tgt.b, 0.06);
-
-    uniformsRef.current.uTime.value += delta;
-    uniformsRef.current.uAmp.value = dampedAmp.current;
-    uniformsRef.current.uColorA.value.setRGB(
-      dampedColorA.current[0],
-      dampedColorA.current[1],
-      dampedColorA.current[2]
-    );
-    uniformsRef.current.uColorB.value.setRGB(
-      dampedColorB.current[0],
-      dampedColorB.current[1],
-      dampedColorB.current[2]
-    );
-
-    if (meshRef.current) {
-      // Scale rango contenido (1.0 → 1.08, era 1.20). El "respirar" sale
-      // del displacement, no del scale — así no recortamos contra el
-      // borde del canvas al respirar. Rotación lenta para que el patrón
-      // de bultos se mueva en pantalla.
-      const scale = 1.0 + dampedAmp.current * 0.08;
-      meshRef.current.scale.setScalar(scale);
-      meshRef.current.rotation.y += delta * 0.12;
-      meshRef.current.rotation.x += delta * 0.04;
-    }
-  });
-
-  return (
-    <mesh ref={meshRef}>
-      {/* Subdiv 8 = ~5000 vértices, silueta circular real. Con
-          displacement bajo (max 0.25) y noise de baja frecuencia, NO
-          aparecen espinas en la silueta — solo bultos suaves. */}
-      <icosahedronGeometry args={[1, 8]} />
-      <shaderMaterial
-        uniforms={uniformsRef.current}
-        vertexShader={vertexShader}
-        fragmentShader={fragmentShader}
-        transparent
-        depthWrite={false}
-      />
-    </mesh>
-  );
-}
 
 export default function OrbVoice({
   size = 120,
@@ -277,30 +83,142 @@ export default function OrbVoice({
   inputLevelRef,
   outputLevelRef,
 }: OrbVoiceProps) {
+  // Tamaños relativos — mismas proporciones que AIOrb para que se vean
+  // idénticos en home y voice mode.
+  const halo = size * 1.1;
+  const blob = size * 0.7;
+  const inner = size * 0.35;
+
+  // Refs al DOM para mutar transform/opacity por frame sin re-renderizar
+  // React. Patrón estándar para animaciones audio-reactivas: el ciclo de
+  // render de React es demasiado caro para 60fps de updates de estilo.
+  const haloRef = useRef<HTMLDivElement | null>(null);
+  const blobRef = useRef<HTMLDivElement | null>(null);
+  const innerRef = useRef<HTMLDivElement | null>(null);
+  const dampedAmp = useRef(0);
+
+  useEffect(() => {
+    let raf = 0;
+    const tick = () => {
+      // Tomamos el max entre input (mic) y output (PCM de la IA). Esto
+      // asegura que el orb se mueva con QUIEN esté hablando.
+      const target = Math.max(
+        inputLevelRef?.current ?? 0,
+        outputLevelRef?.current ?? 0
+      );
+
+      // Damping suave (0.15) para que el orb no se sienta nervioso —
+      // sigue la voz con ~100ms de smoothing, lo justo para ser percibido
+      // como "responde a mí" sin tics bruscos.
+      dampedAmp.current += (target - dampedAmp.current) * 0.15;
+      const a = dampedAmp.current;
+
+      if (blobRef.current) {
+        // Scale exagerado pero contenido: 1.0 → 1.14. Más grande que el
+        // 1.08 del orb shader de la versión anterior — "más exagerado".
+        // Combinado con el morph CSS (border-radius keyframes) se siente
+        // orgánico, no como un bombeo regular.
+        const scale = 1.0 + a * 0.14;
+        blobRef.current.style.transform = `scale(${scale.toFixed(3)})`;
+        // Brillo extra cuando hay audio — el blob "se ilumina" al hablar.
+        const bright = 1.0 + a * 0.15;
+        blobRef.current.style.filter = `brightness(${bright.toFixed(3)})`;
+      }
+      if (haloRef.current) {
+        // El halo CRECE y se ABRE en opacidad con el audio. Aquí está la
+        // mayor parte del "movimiento exagerado pero elegante" — el halo
+        // es difuso (blur 18px) así que escalarlo no se siente brusco.
+        const haloScale = 1.0 + a * 0.35;
+        const haloOpacity = 0.45 + a * 0.50;
+        haloRef.current.style.transform = `scale(${haloScale.toFixed(3)})`;
+        haloRef.current.style.opacity = haloOpacity.toFixed(3);
+      }
+      if (innerRef.current) {
+        // El highlight interno también se intensifica con audio — añade
+        // sensación de "pulso vivo" desde el centro del orb.
+        const innerOpacity = 0.5 + a * 0.45;
+        innerRef.current.style.opacity = innerOpacity.toFixed(3);
+      }
+
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [inputLevelRef, outputLevelRef]);
+
+  const palette = PALETTES[state];
+
+  // animation-duration del morph: más lento en idle (4.2s = misma cadencia
+  // del home), más rápido en speaking/listening (2.8s) — el blob morphea
+  // visiblemente más rápido cuando hay actividad. thinking se mantiene
+  // contemplativo (3.6s).
+  const morphDuration =
+    state === "speaking" ? "2.6s" :
+    state === "listening" ? "2.8s" :
+    state === "thinking" ? "3.6s" :
+    "4.2s";
+
   return (
     <div
-      className={`relative ${className}`}
+      className={`relative flex items-center justify-center ${className}`}
       style={{ width: size, height: size }}
     >
-      <Canvas
-        // dpr 2 en Retina + antialias true → silueta crisp y sin escalones
-        // poligonales. Critical para que los bordes no se vean "rough".
-        dpr={[1, 2]}
-        gl={{ antialias: true, alpha: true, powerPreference: "low-power" }}
-        // Camera más lejos (z=3.0 vs 2.6) + FOV más cerrado (50 vs 55) →
-        // más aire alrededor del orb para que el respirar + bultos no
-        // recorten contra el borde superior del canvas.
-        camera={{ position: [0, 0, 3.0], fov: 50 }}
-        frameloop="always"
+      {/* 1. Halo difuso conic-gradient. Sin animation-rotate aquí —
+          dejamos solo el rAF para que la rotación venga del audio. NO,
+          mantenemos también el rotate base para que en idle puro siga
+          girando despacio (sin esto el orb en idle se ve estático).
+          La opacidad se sobreescribe desde rAF cada frame, eso pisa el
+          keyframe blobGlow — está bien, queremos el control reactivo. */}
+      <div
+        ref={haloRef}
+        className="absolute rounded-full"
+        style={{
+          width: halo,
+          height: halo,
+          background: palette.halo,
+          filter: "blur(18px)",
+          opacity: 0.45,
+          animation: "blobRotate 14s linear infinite",
+          transition: "background 600ms ease-out",
+        }}
+      />
+
+      {/* 2. Blob central — gradiente del estado + morph CSS. El scale lo
+          mete el rAF. La rotación reverse y morph siguen siendo CSS
+          animation porque son cíclicas y no necesitan tracking de audio. */}
+      <div
+        ref={blobRef}
+        className="relative"
+        style={{
+          width: blob,
+          height: blob,
+          background: palette.blob,
+          borderRadius: "62% 38% 48% 52% / 50% 60% 40% 50%",
+          animation: `blobMorph ${morphDuration} ease-in-out infinite, blobRotate 12s linear infinite reverse`,
+          boxShadow: `0 10px 40px ${palette.shadow1}, 0 4px 20px ${palette.shadow2}, inset 0 0 30px rgba(255, 255, 255, 0.4)`,
+          // Cambio de paleta = transición suave (600ms) en background y
+          // box-shadow. Sin esto, cambiar de idle→listening se sentía como
+          // un cut.
+          transition: "background 600ms ease-out, box-shadow 600ms ease-out",
+        }}
       >
-        <ambientLight intensity={0.6} />
-        <pointLight position={[2, 3, 4]} intensity={0.7} />
-        <OrbMesh
-          state={state}
-          inputLevelRef={inputLevelRef}
-          outputLevelRef={outputLevelRef}
+        {/* 3. Inner highlight — blanco translúcido. La animation interna
+            (blobInner) sigue pulsando; rAF solo modula opacidad con audio. */}
+        <div
+          ref={innerRef}
+          className="absolute rounded-full"
+          style={{
+            width: inner,
+            height: inner,
+            top: "18%",
+            left: "22%",
+            background:
+              "radial-gradient(circle, rgba(255,255,255,0.85) 0%, rgba(255,255,255,0) 70%)",
+            opacity: 0.6,
+            animation: "blobInner 2.8s ease-in-out infinite",
+          }}
         />
-      </Canvas>
+      </div>
     </div>
   );
 }

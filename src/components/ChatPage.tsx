@@ -125,6 +125,16 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
   const [voiceTranscript, setVoiceTranscript] = useState<VoiceTurn[]>([]);
   // Seed for VoiceAgent when restoring a past voice conversation.
   const [voiceSeed, setVoiceSeed] = useState<VoiceTurn[] | undefined>(undefined);
+  // Bump-key para VoiceAgent — al cambiar, React desmonta y remonta el
+  // componente, lo que dispara su cleanup (cierra WebRTC + apaga mic).
+  // Usado al cargar un protocolo del historial para que NO se quede una
+  // sesión de voz vieja activa mientras el doctor revisa el cargado.
+  const [voiceSessionKey, setVoiceSessionKey] = useState(0);
+  // Diálogo de confirmación para "vas a perder la conversación actual".
+  // Se muestra cuando el doctor toca un item del historial mientras tiene
+  // una conversación viva (voice o text). null = cerrado; HistoryItem =
+  // pending de cargar si confirma.
+  const [pendingHistoryLoad, setPendingHistoryLoad] = useState<HistoryItem | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewHTML, setPreviewHTML] = useState<string>("");
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -757,7 +767,35 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
     else if (recState === "idle") startRecording();
   };
 
+  // Hay una conversación viva si el doctor tiene mensajes en modo texto
+  // o turnos en modo voz. Si NO la hay, podemos cargar el historial sin
+  // pedir confirmación (es el caso común: vienes del landing y picas un
+  // protocolo de la lista — no perdés nada).
+  const hasActiveConversation =
+    !landingShown && (messages.length > 0 || voiceTranscript.length > 0);
+
+  // Punto de entrada desde el UI (clic en historial). Si hay conversación
+  // viva muestra el modal de confirmación; si no, carga directo.
+  const requestLoadHistory = (item: HistoryItem) => {
+    if (hasActiveConversation) {
+      // Cerramos el sheet de historial primero para que el modal se vea
+      // limpio sobre la conversación, no apilado sobre la lista.
+      setMobileSheet(null);
+      setPendingHistoryLoad(item);
+      return;
+    }
+    handleLoadHistory(item);
+  };
+
   const handleLoadHistory = async (item: HistoryItem) => {
+    // Si veníamos de una conversación activa, bumpeamos voiceSessionKey
+    // ANTES del cross-fade para que VoiceAgent se desmonte y cierre su
+    // WebRTC + libere el mic. Sin esto la sesión seguía corriendo encima
+    // del transcript cargado y el agente respondía al doctor cuando
+    // hablaba aunque visualmente ya estaba en otro protocolo.
+    if (hasActiveConversation) {
+      setVoiceSessionKey((k) => k + 1);
+    }
     // Mostrar overlay de carga + cerrar el sheet móvil de inmediato para
     // que el doctor vea acción al instante en lugar de mirar la lista.
     setLoadingProtocolFromHistory(true);
@@ -874,7 +912,7 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
               {history.map((item) => (
                 <button
                   key={item.id}
-                  onClick={() => handleLoadHistory(item)}
+                  onClick={() => requestLoadHistory(item)}
                   className="w-full text-left px-3 py-2.5 rounded-lg hover:bg-stone-800 transition-colors group"
                 >
                   <div className="text-sm font-medium text-stone-200 truncate">
@@ -1044,6 +1082,12 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
             style={{ animation: "fadeIn 280ms ease-out" }}
           >
             <VoiceAgent
+              // key={voiceSessionKey}: al cargar protocolo del historial
+              // bumpeamos esta key para que VoiceAgent se desmonte (cierra
+              // WebRTC + mic) y remonte limpio con el seed nuevo. Sin esto
+              // la sesión activa seguía corriendo encima del transcript
+              // cargado, mezclando turnos viejos con turnos del histórico.
+              key={voiceSessionKey}
               // First name only — full name sounds awkward in voice ("Hola Marco Saenz Lopez...")
               doctorName={(user.name || user.email.split("@")[0]).split(/\s+/)[0]}
               onProtocolGenerated={(data) => {
@@ -1337,8 +1381,10 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
           items={history}
           onClose={() => setMobileSheet(null)}
           onPick={(item) => {
-            handleLoadHistory(item);
-            setMobileSheet(null);
+            // requestLoadHistory cierra el sheet móvil internamente cuando
+            // pide confirmación; en el flujo directo lo cierra el cross-
+            // fade del handleLoadHistory. Aquí no lo cerramos doble.
+            requestLoadHistory(item);
           }}
         />
       )}
@@ -1578,6 +1624,56 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
                 />
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Confirmación: "vas a perder la conversación actual al cargar
+          este protocolo". Se muestra cuando el doctor toca un item del
+          historial mientras tiene una conversación viva (mensajes en
+          modo texto o turnos en modo voz). Es un modal in-app — el
+          confirm() nativo del browser se ve roto en PWA standalone. */}
+      {pendingHistoryLoad && (
+        <div
+          className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/40 p-4"
+          style={{ animation: "fadeIn 180ms ease-out" }}
+          onClick={() => setPendingHistoryLoad(null)}
+        >
+          <div
+            className="w-full max-w-sm bg-white rounded-2xl shadow-xl border border-stone-200 p-5"
+            onClick={(e) => e.stopPropagation()}
+            style={{ animation: "fadeIn 220ms ease-out" }}
+          >
+            <h3 className="text-base font-semibold text-stone-900 mb-1">
+              ¿Cerrar la conversación actual?
+            </h3>
+            <p className="text-sm text-stone-600 mb-4 leading-relaxed">
+              {mode === "voice"
+                ? "La sesión de voz se va a cerrar y voy a cargar el protocolo de "
+                : "La conversación actual se va a cerrar y voy a cargar el protocolo de "}
+              <span className="font-semibold text-stone-800">
+                {pendingHistoryLoad.paciente_nombre}
+              </span>
+              . Podrás seguir editándolo por texto o por voz.
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setPendingHistoryLoad(null)}
+                className="flex-1 px-4 py-2.5 rounded-xl border border-stone-200 text-stone-700 font-medium text-sm hover:bg-stone-50 active:bg-stone-100 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => {
+                  const item = pendingHistoryLoad;
+                  setPendingHistoryLoad(null);
+                  handleLoadHistory(item);
+                }}
+                className="flex-1 px-4 py-2.5 rounded-xl bg-stone-900 text-white font-medium text-sm hover:bg-stone-800 active:bg-stone-700 transition-colors"
+              >
+                Cargar
+              </button>
+            </div>
           </div>
         </div>
       )}

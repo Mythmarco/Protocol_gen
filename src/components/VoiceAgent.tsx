@@ -3,18 +3,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { RealtimeAgent, RealtimeSession, tool } from "@openai/agents/realtime";
 import type { ProtocoloData } from "@/lib/protocol-types";
-import dynamic from "next/dynamic";
 import { useVoiceLevels } from "@/hooks/useVoiceLevels";
 import { injectMobilePreviewCloseButton } from "@/lib/preview-overlay";
-import type { OrbState } from "./OrbVoice";
+import OrbVoice, { type OrbState } from "./OrbVoice";
 
-// Lazy-load three.js (~180KB) solo cuando el doctor entra a modo voz.
-// ssr:false porque WebGL no es SSR-safe. Esto saca three del bundle de
-// login y modo texto, manteniendo el initial paint rápido.
-const OrbVoice = dynamic(() => import("./OrbVoice"), {
-  ssr: false,
-  loading: () => <div style={{ width: 200, height: 200 }} />,
-});
+// OrbVoice ahora es CSS-only (sin three.js) — import directo. La versión
+// anterior lo cargaba con next/dynamic para excluir three del bundle;
+// como ya no usamos three, el lazy-load es innecesario y agrega un flash
+// de placeholder al entrar a voice mode.
 
 type Status = "idle" | "connecting" | "listening" | "speaking" | "thinking" | "error";
 
