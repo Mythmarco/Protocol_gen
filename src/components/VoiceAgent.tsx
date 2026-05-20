@@ -37,6 +37,12 @@ interface Props {
   // ChatPage limpie pendingProtocol + savedSnapshot — si no, el toolbar
   // "Archivado" se queda colgado tras salir de un protocolo cargado.
   onNewConversation?: () => void;
+  // Card opcional para renderizar al final del transcript de voz cuando
+  // hay un protocolo generado o cargado de historial. ChatPage construye
+  // los botones (Vista previa / Descargar / Drive) y los pasa aquí —
+  // hace que el último output del agente venga con sus acciones como
+  // parte del flujo conversacional.
+  bottomActionCard?: React.ReactNode;
 }
 
 // ── Tools available to the voice agent ────────────────────────────────────────
@@ -488,6 +494,7 @@ export default function VoiceAgent({
   onTranscriptChange,
   initialTranscript,
   onNewConversation,
+  bottomActionCard,
 }: Props) {
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -550,7 +557,10 @@ export default function VoiceAgent({
 
   useEffect(() => {
     transcriptBottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [transcript]);
+    // También scrollea cuando el bottomActionCard cambia — al cargar un
+    // protocolo de historial el card aparece y el doctor debe verlo, no
+    // tener que scrollear manualmente para encontrarlo.
+  }, [transcript, bottomActionCard]);
 
   const cleanup = useCallback(() => {
     if (closeTimerRef.current) {
@@ -880,7 +890,12 @@ export default function VoiceAgent({
       </div>
 
       {transcript.length > 0 && (
-        <div className="w-full max-w-2xl bg-white border border-stone-200 rounded-2xl p-4 max-h-[40vh] overflow-y-auto shadow-sm">
+        <div className="w-full max-w-2xl bg-white border border-stone-200 rounded-2xl p-4 shadow-sm flex-1 min-h-0 overflow-y-auto">
+          {/* Antes tenía max-h-[40vh] fijo que cortaba transcripts largos y
+              dejaba el bottomActionCard fuera de vista. Ahora el contenedor
+              usa flex-1 para llenar el espacio disponible y scrollea
+              naturalmente; el bottomActionCard queda siempre al final del
+              scroll y bottomRef.scrollIntoView lo trae a la vista. */}
           <div className="space-y-3">
             {transcript.map((entry) => (
               <div key={entry.id} className={`flex ${entry.role === "user" ? "justify-end" : "justify-start"}`}>
@@ -895,6 +910,12 @@ export default function VoiceAgent({
                 </div>
               </div>
             ))}
+            {/* Card de acciones para el último output del agente — viene
+                desde ChatPage según pendingProtocol/savedSnapshot. Se ve
+                como parte del flujo conversacional, no como toolbar. */}
+            {bottomActionCard && (
+              <div className="pt-2 border-t border-stone-100">{bottomActionCard}</div>
+            )}
             <div ref={transcriptBottomRef} />
           </div>
         </div>

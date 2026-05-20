@@ -544,6 +544,80 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
   // Re-download a protocol that is already archived. Calls /api/pdf with
   // mode="download" so it just renders + returns — no new folio, no Drive
   // upload, no duplicate row in Supabase.
+  // Card que sirve para "como parte del último output del agente":
+  //   - inline bajo el último mensaje en text mode (chat thread)
+  //   - al final del transcript en voice mode (via prop bottomActionCard)
+  // Estado dual:
+  //   - Si el protocolo en pantalla === savedSnapshot.datos_json → archivado
+  //     (botones: Vista previa, Descargar, Abrir en Drive)
+  //   - Si es draft nuevo (no archivado) → Vista previa + Guardar PDF
+  const renderProtocolActionCard = (protocol: ProtocoloData) => {
+    const isArchived =
+      savedSnapshot != null && savedSnapshot.datos_json === protocol;
+    return (
+      <div className="mt-3 pt-3 border-t border-stone-100 flex flex-wrap items-center gap-2">
+        {isArchived ? (
+          <span
+            className="flex items-center gap-1 text-xs bg-stone-100 text-stone-600 px-2 py-0.5 rounded-full font-medium"
+            title={
+              savedSnapshot?.folio
+                ? `Folio ${savedSnapshot.folio} guardado en Drive`
+                : "Guardado en Drive"
+            }
+          >
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+            Archivado{savedSnapshot?.folio ? ` · ${savedSnapshot.folio}` : ""}
+          </span>
+        ) : (
+          <span className="text-xs text-green-600 font-medium">
+            ✓ Protocolo generado
+          </span>
+        )}
+
+        <div className="ml-auto flex items-center gap-2">
+          <button
+            onClick={() => openPreview(protocol)}
+            className="text-xs border border-stone-300 hover:border-amber-400 text-stone-600 hover:text-amber-600 rounded-lg px-2.5 py-1 font-medium transition-colors"
+          >
+            Vista previa
+          </button>
+
+          {isArchived ? (
+            <>
+              {savedSnapshot?.driveUrl && (
+                <a
+                  href={savedSnapshot.driveUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs border border-stone-300 hover:border-amber-400 text-stone-600 hover:text-amber-600 rounded-lg px-2.5 py-1 font-medium transition-colors"
+                >
+                  Abrir en Drive
+                </a>
+              )}
+              <button
+                onClick={handleDownloadArchived}
+                disabled={isDownloading}
+                className="text-xs bg-amber-500 hover:bg-amber-400 disabled:opacity-60 text-white rounded-lg px-2.5 py-1 font-medium transition-colors"
+              >
+                {isDownloading ? "Descargando…" : "Descargar"}
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={handleDownloadPDF}
+              disabled={isGeneratingPDF}
+              className="text-xs bg-amber-500 hover:bg-amber-400 disabled:opacity-60 text-white rounded-lg px-2.5 py-1 font-medium transition-colors"
+            >
+              {isGeneratingPDF ? "Guardando…" : "Guardar PDF"}
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   const handleDownloadArchived = async () => {
     if (!savedSnapshot) return;
     setIsDownloading(true);
@@ -1149,6 +1223,15 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
                 setVoiceTranscript([]);
                 setInput("");
               }}
+              // Pasa el action card al final del transcript de voz para que
+              // los botones Vista previa / Descargar / Drive aparezcan
+              // "como parte del último output del agente", no como un
+              // toolbar separado arriba.
+              bottomActionCard={
+                pendingProtocol
+                  ? renderProtocolActionCard(pendingProtocol)
+                  : null
+              }
             />
           </div>
         )}
@@ -1242,77 +1325,7 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
                     <span className="whitespace-pre-wrap">{cleanText}</span>
                   )}
 
-                  {isAssistant && protocol && (() => {
-                    // Treat this inline card as "archived" if it points to
-                    // the same protocol object that's currently saved. Then
-                    // Guardar PDF → Descargar, and we add an "Abrir en Drive"
-                    // link when we have one.
-                    const isArchived =
-                      savedSnapshot != null &&
-                      savedSnapshot.datos_json === protocol;
-                    return (
-                      <div className="mt-3 pt-3 border-t border-stone-100 flex flex-wrap items-center gap-2">
-                        {isArchived ? (
-                          <span
-                            className="flex items-center gap-1 text-xs bg-stone-100 text-stone-600 px-2 py-0.5 rounded-full font-medium"
-                            title={
-                              savedSnapshot?.folio
-                                ? `Folio ${savedSnapshot.folio} guardado en Drive`
-                                : "Guardado en Drive"
-                            }
-                          >
-                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                              <polyline points="20 6 9 17 4 12" />
-                            </svg>
-                            Archivado{savedSnapshot?.folio ? ` · ${savedSnapshot.folio}` : ""}
-                          </span>
-                        ) : (
-                          <span className="text-xs text-green-600 font-medium">
-                            ✓ Protocolo generado
-                          </span>
-                        )}
-
-                        <div className="ml-auto flex items-center gap-2">
-                          <button
-                            onClick={() => openPreview(protocol)}
-                            className="text-xs border border-stone-300 hover:border-amber-400 text-stone-600 hover:text-amber-600 rounded-lg px-2.5 py-1 font-medium transition-colors"
-                          >
-                            Vista previa
-                          </button>
-
-                          {isArchived ? (
-                            <>
-                              {savedSnapshot?.driveUrl && (
-                                <a
-                                  href={savedSnapshot.driveUrl}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-xs border border-stone-300 hover:border-amber-400 text-stone-600 hover:text-amber-600 rounded-lg px-2.5 py-1 font-medium transition-colors"
-                                >
-                                  Abrir en Drive
-                                </a>
-                              )}
-                              <button
-                                onClick={handleDownloadArchived}
-                                disabled={isDownloading}
-                                className="text-xs bg-amber-500 hover:bg-amber-400 disabled:opacity-60 text-white rounded-lg px-2.5 py-1 font-medium transition-colors"
-                              >
-                                {isDownloading ? "Descargando…" : "Descargar"}
-                              </button>
-                            </>
-                          ) : (
-                            <button
-                              onClick={handleDownloadPDF}
-                              disabled={isGeneratingPDF}
-                              className="text-xs bg-amber-500 hover:bg-amber-400 disabled:opacity-60 text-white rounded-lg px-2.5 py-1 font-medium transition-colors"
-                            >
-                              {isGeneratingPDF ? "Guardando…" : "Guardar PDF"}
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })()}
+                  {isAssistant && protocol && renderProtocolActionCard(protocol)}
                 </div>
               </div>
             );
