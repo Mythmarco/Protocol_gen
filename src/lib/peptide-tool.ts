@@ -42,3 +42,42 @@ export async function executePeptideTool(input: { name: string }) {
   if (error) return { error: error.message, results: [] };
   return { results: data ?? [] };
 }
+
+// list_peptides — devuelve solo nombres + tags resumidos de TODO el catálogo.
+// Le da al modelo awareness del inventario para responder "¿qué péptidos
+// tienes?" sin tener que adivinar nombres, y para sugerir candidatos por
+// objetivo. Payload pequeño: hasta ~50 nombres con campos cortos.
+export async function executeListPeptidesTool() {
+  const supabase = createAdminClient();
+  // Si en la tabla hay otros campos descriptivos cortos (category, tag,
+  // primaryUse, etc.) los inclumos opcionalmente. Para evitar inflar
+  // contexto NO traemos description_es/en aquí — para eso ya está
+  // get_peptide_info con nombre.
+  const { data, error } = await supabase
+    .from("Peptide")
+    .select("name, category, primaryUse, dosage, frequency")
+    .order("name", { ascending: true })
+    .limit(100);
+
+  if (error) {
+    // Si alguna columna no existe en la tabla, hacemos fallback a solo name
+    // para que el tool siempre devuelva algo útil.
+    const fallback = await supabase
+      .from("Peptide")
+      .select("name")
+      .order("name", { ascending: true })
+      .limit(100);
+    if (fallback.error) {
+      return { error: fallback.error.message, peptidos: [] };
+    }
+    return {
+      peptidos: (fallback.data ?? []).map((r) => ({ name: r.name })),
+      note: "Catálogo en versión simplificada (sin tags). Usa get_peptide_info para detalles de cualquier péptido.",
+    };
+  }
+
+  return {
+    peptidos: data ?? [],
+    count: (data ?? []).length,
+  };
+}

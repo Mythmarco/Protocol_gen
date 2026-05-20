@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import { getSession } from "@/lib/session";
-import { executePeptideTool } from "@/lib/peptide-tool";
+import { executePeptideTool, executeListPeptidesTool } from "@/lib/peptide-tool";
 import { executePriceTool } from "@/lib/price-tool";
 import { executeMemoryTool } from "@/lib/memory-tool";
 import { OPENAI_RESPONSES_TOOLS } from "@/lib/openai-tools";
@@ -173,6 +173,8 @@ LLAMA finalize_protocol con el JSON completo. No respondas con texto suelto.`;
       let result: unknown;
       if (tc.name === "get_peptide_info") {
         result = await executePeptideTool(args as { name: string });
+      } else if (tc.name === "list_peptides") {
+        result = await executeListPeptidesTool();
       } else if (tc.name === "get_product_price") {
         result = await executePriceTool(args as { product_name: string });
       } else if (tc.name === "search_past_protocols") {

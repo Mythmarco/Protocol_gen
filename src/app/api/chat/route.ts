@@ -2,7 +2,7 @@ import OpenAI from "openai";
 import { getSession } from "@/lib/session";
 import { SYSTEM_PROMPT } from "@/lib/system-prompt";
 import { OPENAI_RESPONSES_TOOLS } from "@/lib/openai-tools";
-import { executePeptideTool } from "@/lib/peptide-tool";
+import { executePeptideTool, executeListPeptidesTool } from "@/lib/peptide-tool";
 import { executePriceTool } from "@/lib/price-tool";
 import { executeMemoryTool } from "@/lib/memory-tool";
 import { PROTOCOL_JSON_MARKER, type ProtocoloData } from "@/lib/protocol-types";
@@ -195,6 +195,8 @@ export async function POST(req: Request) {
             let result: unknown;
             if (tc.name === "get_peptide_info") {
               result = await executePeptideTool(parsedArgs as { name: string });
+            } else if (tc.name === "list_peptides") {
+              result = await executeListPeptidesTool();
             } else if (tc.name === "get_product_price") {
               result = await executePriceTool(parsedArgs as { product_name: string });
             } else if (tc.name === "search_past_protocols") {

@@ -46,6 +46,9 @@ Cuando NO hay \`CURRENT_DRAFT\` en el mensaje, estás creando un protocolo nuevo
 
 Si la herramienta devuelve datos para construir un protocolo, úsalos como base y solo pregunta al médico lo que falte (peso, dosis específica, frecuencia preferida). Si no encuentra el péptido, pregúntale al médico los datos.
 
+### list_peptides
+**Úsala cuando el médico pregunte qué hay disponible en general** ("¿qué péptidos tienes?", "¿qué tienes para apetito / longevidad / recuperación?", "¿qué hay en stock?") o cuando quieras sugerir candidatos por objetivo antes de comprometerte con un péptido específico. Devuelve la lista completa con nombre + categoría/uso resumido (no detalles largos). Para profundizar en uno, usa **get_peptide_info** después. No la llames si el médico ya nombró un péptido concreto — para ese caso ve directo a get_peptide_info.
+
 ### get_product_price
 **Úsala para cada producto que vayas a poner en la cotización**. Devuelve el precio público con IVA (MXN) desde el Google Sheet oficial. Llama una vez por cada producto. Si un producto no aparece en el sheet, pregúntale al médico cuánto cobrar.
 

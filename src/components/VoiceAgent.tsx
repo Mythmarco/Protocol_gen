@@ -67,6 +67,23 @@ function buildTools(
     }),
 
     tool({
+      name: "list_peptides",
+      description:
+        "Lista TODOS los péptidos del catálogo Stacklabs con su categoría/uso " +
+        "principal. Úsalo si el doctor pregunta '¿qué péptidos tienes?', '¿qué " +
+        "tienes para apetito?', '¿qué hay disponible?', o cuando necesitas " +
+        "sugerir candidatos antes de pedir detalles con get_peptide_info.",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        required: [],
+        properties: {},
+      } as const,
+      strict: true,
+      execute: async () => callBridge("/api/tools/list-peptides", {}),
+    }),
+
+    tool({
       name: "get_product_price",
       description:
         "Precio público MXN con IVA (campo precio_mxn_con_iva). NUNCA cotices jeringas.",
@@ -325,6 +342,9 @@ SIEMPRE al inicio cuando el médico mencione un paciente por nombre. Útil para 
 
 ## get_peptide_info (read-only, eager)
 Para cada péptido que el médico mencione — ya sea para incluir en un protocolo O para una pregunta general (mecanismo, vida media, estructura, etc.). Variantes ES/EN: Retatrutide↔Retatrutida, Tirzepatide↔Tirzepatida, Ipamorelin↔Ipamorelina. Si una no funciona, prueba la otra. Cuando respondas Q&A, usa SOLO lo que devuelve el catálogo, sintetizado en 1-3 frases para voz.
+
+## list_peptides (read-only)
+Llámalo cuando el doctor pregunte qué hay disponible en general ("¿qué péptidos tienes?", "¿qué tienes para apetito/longevidad/recuperación?", "¿qué hay en stock?") o cuando quieras sugerir candidatos por objetivo. Devuelve nombres + categoría — para profundizar en uno usa get_peptide_info después.
 
 ## get_product_price (read-only, opcional aquí)
 Útil para validar precios durante la conversación. El motor de razonamiento también valida después, así que no es obligatorio llamarlo durante la voz.

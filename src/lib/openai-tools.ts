@@ -39,6 +39,24 @@ export const OPENAI_RESPONSES_TOOLS: OpenAITool[] = [
   },
   {
     type: "function",
+    name: "list_peptides",
+    description:
+      "Devuelve la lista completa de péptidos del catálogo Stacklabs con su " +
+      "categoría/uso principal (no detalles largos). Úsalo cuando el médico " +
+      "pregunte qué hay disponible ('¿qué péptidos tienes?', '¿qué tienes para " +
+      "apetito?', '¿qué tengo en stock?') o cuando necesites sugerir candidatos " +
+      "por objetivo antes de profundizar. Para detalles de un péptido específico " +
+      "(mecanismo, vida media, dosis, reconstitución) usa get_peptide_info.",
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      required: [],
+      properties: {},
+    },
+    strict: true,
+  },
+  {
+    type: "function",
     name: "get_product_price",
     description:
       "Devuelve precio público MXN CON IVA del catálogo (columna 'Precio al " +
