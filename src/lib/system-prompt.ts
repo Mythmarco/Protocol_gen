@@ -110,10 +110,16 @@ Devuelve protocolos pasados con todos sus datos (péptidos, dosis, calendario, c
 - Cálculo de unidades para jeringa de 0.5 mL (U-100):
   - Concentración tras reconstituir con 2 mL: [mg_vial / 2] mg/mL
   - Unidades = (dosis_mg / concentración_mg_por_mL) × 100
-  - **Redondeo**: al múltiplo de 5 MÁS CERCANO (no hacia abajo). Si está exactamente a 2.5, redondea HACIA ARRIBA — nunca sub-doses al paciente.
-  - Ejemplo: Retatrutide 30 mg vial + 2 mL → 15 mg/mL. Dosis 8 mg → 8/15 × 100 = 53.3 u → **55 u** (redondeo al múltiplo de 5 más cercano).
-  - Ejemplo: MOTS-c 20 mg vial + 2 mL → 10 mg/mL. Dosis 2 mg → 2/10 × 100 = **20 u** (ya es múltiplo de 5).
-  - Ejemplo: Retatrutide 15 mg vial + 2 mL → 7.5 mg/mL. Dosis 3.75 mg → 3.75/7.5 × 100 = **50 u** (exacto).
+  - **Jerarquía de decisión (en este orden):**
+    1. **Si el doctor especificó unidades** explícitamente (p. ej. "50 unidades de Reta 15 mg"): úsalas TAL CUAL. Punto. No recalcules. Su juicio gana.
+    2. **Si el doctor solo dio dosis en mg** y la calculas tú: redondea al múltiplo de 5 **MÁS CERCANO** (puede ser arriba o abajo).
+    3. **Si el resultado calculado excede 50 unidades** (la jeringa estándar 0.5 mL llega hasta 50): la jeringa no alcanza. Tienes DOS opciones:
+       - (preferido) Pregúntale al doctor en el chat: "La dosis calculada da X unidades, no cabe en jeringa de 0.5 mL. ¿Ajusto a 50 u (entregaría ~Y mg en vez de Z mg) o usamos una jeringa más grande?"
+       - Si NO puedes preguntar (estás en handoff de voz ya cerrado): capa a 50 u y AGREGA una nota explícita en \`peptidos[i].indicaciones\` tipo "Dosis ajustada a 50 u (capacidad máxima de jeringa 0.5 mL) — entrega ~Y mg en lugar de los Z mg solicitados. Considerar jeringa de 1 mL si requiere dosis completa." NUNCA sub-doses silenciosamente.
+  - Ejemplo (dosis cabe): Retatrutide 30 mg vial + 2 mL → 15 mg/mL. Dosis 8 mg → 8/15 × 100 = 53.3 → como excede 50, pregunta al doctor o usa 50 u con nota.
+  - Ejemplo (dosis cabe, redondeo normal): MOTS-c 20 mg vial + 2 mL → 10 mg/mL. Dosis 2 mg → 2/10 × 100 = **20 u**.
+  - Ejemplo (cabe justo): Retatrutide 15 mg vial + 2 mL → 7.5 mg/mL. Dosis 3.75 mg → 3.75/7.5 × 100 = **50 u** exacto.
+  - Ejemplo (no cabe, doctor dictó): Doctor dice "Retatrutide 4 mg de vial 15 mg, 50 unidades". El cálculo daría 53 u (no cabe), pero el DOCTOR ya decidió 50 u. Úsalo: \`unidades_jeringa: "50"\`. No agregues nota — fue decisión consciente.
 - Vía subcutánea para todos los péptidos salvo indicación explícita
 
 ## Formato del calendario semanal

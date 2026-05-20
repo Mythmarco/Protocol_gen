@@ -53,7 +53,10 @@ Lo que viene en \`gathered\` ES lo que el doctor dictó. NUNCA lo "optimices" o 
 - **Dosis explícita**: si dosis_descripcion ya viene con valor concreto, NO cambies a una dosis "estándar" del catálogo.
 - **Cálculo de unidades SOLO cuando el campo viene vacío**:
   - concentración = vial_mg / 2 mL
-  - unidades = (dosis_mg / concentración) × 100, redondea al múltiplo de 5 MÁS CERCANO (nunca hacia abajo: si está a 2.5 sube). Ej: 53.3 → 55, no 50. Sub-dosificar al paciente es inaceptable.
+  - unidades = (dosis_mg / concentración) × 100. Lógica de redondeo:
+    a) Si gathered.peptidos[i].unidades_jeringa ya vino con valor → ÚSALO. El doctor decidió. Punto.
+    b) Si no hay valor explícito y el resultado ≤ 50 → redondea al múltiplo de 5 más cercano.
+    c) Si el resultado excede 50 (no cabe en jeringa de 0.5 mL): caps a 50 u y AGREGA nota en peptidos[i].indicaciones: "Dosis ajustada a 50 u (capacidad jeringa 0.5 mL) — entrega aprox. X mg de los Y mg solicitados. Considerar jeringa 1 mL si se requiere dosis completa." Nunca sub-doses silenciosamente sin flag.
 
 # Campos del protocolo
 - metadata.creado_por = "${session.email}" (exacto)
