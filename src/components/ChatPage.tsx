@@ -1136,6 +1136,19 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
               }}
               onTranscriptChange={setVoiceTranscript}
               initialTranscript={voiceSeed}
+              onNewConversation={() => {
+                // VoiceAgent ya limpia su transcript; aquí limpiamos los
+                // estados de ChatPage que controlan el toolbar superior
+                // (Archivado / Vista previa / Descargar). Sin esto el
+                // toolbar se quedaba colgado tras salir de un protocolo
+                // cargado de historial.
+                setPendingProtocol(null);
+                setSavedSnapshot(null);
+                setMessages([]);
+                setVoiceSeed(undefined);
+                setVoiceTranscript([]);
+                setInput("");
+              }}
             />
           </div>
         )}

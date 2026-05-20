@@ -33,6 +33,10 @@ interface Props {
   // voice mode, we seed the agent with those turns so it picks up where the
   // doctor left off instead of starting cold.
   initialTranscript?: TranscriptEntry[];
+  // Pidió "nueva conversación" desde el voice stage. Bubblea para que
+  // ChatPage limpie pendingProtocol + savedSnapshot — si no, el toolbar
+  // "Archivado" se queda colgado tras salir de un protocolo cargado.
+  onNewConversation?: () => void;
 }
 
 // ── Tools available to the voice agent ────────────────────────────────────────
@@ -483,6 +487,7 @@ export default function VoiceAgent({
   onProtocolGenerated,
   onTranscriptChange,
   initialTranscript,
+  onNewConversation,
 }: Props) {
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -854,7 +859,14 @@ export default function VoiceAgent({
               Toca el micrófono para hacer cambios al protocolo actual.
             </p>
             <button
-              onClick={() => setTranscript([])}
+              onClick={() => {
+                setTranscript([]);
+                // Notifica al padre para que también limpie pendingProtocol
+                // + savedSnapshot. Sin esto el toolbar "Archivado" arriba
+                // queda colgado aunque el doctor ya está en una conversación
+                // nueva.
+                onNewConversation?.();
+              }}
               className="group inline-flex items-center gap-1.5 text-xs font-medium text-stone-600 bg-white border border-stone-200 hover:border-stone-300 hover:text-stone-900 active:bg-stone-100 rounded-full px-4 py-1.5 shadow-sm transition-all"
             >
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="transition-transform group-hover:rotate-90 duration-300">
