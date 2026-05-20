@@ -1034,132 +1034,6 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
           </div>
         </header>
 
-        {/* Action toolbar — only for UNSAVED drafts. When the on-screen
-             protocol is already archived (loaded from history or just saved),
-             we hide the toolbar entirely and surface the "Descargar / Abrir
-             en Drive" actions inline under the last assistant message. */}
-        {pendingProtocol && savedSnapshot?.datos_json !== pendingProtocol && (
-          <div className="bg-amber-50/60 border-b border-amber-100 px-3 py-2 flex items-center gap-2 overflow-x-auto">
-            <span className="flex items-center gap-1.5 text-xs bg-green-100 text-green-700 px-2.5 py-1 rounded-full font-semibold whitespace-nowrap flex-shrink-0">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
-                <polyline points="20 6 9 17 4 12" />
-              </svg>
-              Protocolo listo
-            </span>
-            <div className="flex-1" />
-            <button
-              onClick={handleRegenerate}
-              disabled={isStreaming}
-              className="flex items-center gap-1.5 text-xs border border-stone-300 hover:border-amber-400 bg-white text-stone-700 hover:text-amber-700 rounded-lg px-3 py-1.5 transition-colors whitespace-nowrap flex-shrink-0"
-              title="Pedir al asistente que regenere"
-            >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <polyline points="23 4 23 10 17 10" /><polyline points="1 20 1 14 7 14" />
-                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
-              </svg>
-              <span className="hidden sm:inline">Regenerar</span>
-            </button>
-            <button
-              onClick={() => openPreview(pendingProtocol)}
-              className="flex items-center gap-1.5 text-xs border border-stone-300 hover:border-amber-400 bg-white text-stone-700 hover:text-amber-700 rounded-lg px-3 py-1.5 transition-colors whitespace-nowrap flex-shrink-0"
-              title="Ver el PDF antes de guardar"
-            >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" />
-              </svg>
-              <span className="hidden sm:inline">Vista previa</span>
-            </button>
-            <button
-              onClick={handleDownloadPDF}
-              disabled={isGeneratingPDF}
-              className="flex items-center gap-1.5 text-xs bg-amber-500 hover:bg-amber-400 disabled:opacity-60 text-white rounded-lg px-3.5 py-1.5 font-semibold transition-colors shadow-sm whitespace-nowrap flex-shrink-0"
-              title="Generar y descargar el PDF + subir a Drive"
-            >
-              {isGeneratingPDF ? (
-                <>
-                  <svg className="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                    <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-                  </svg>
-                  <span>Guardando…</span>
-                </>
-              ) : (
-                <>
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" />
-                  </svg>
-                  Guardar PDF
-                </>
-              )}
-            </button>
-          </div>
-        )}
-
-        {/* ARCHIVED toolbar — visible cuando el protocolo en pantalla YA está
-             guardado (cargado de historial o post-save). En text mode los
-             mismos botones aparecen inline en el banner del mensaje IA, pero
-             en voice mode los mensajes de ChatPage no se renderizan, así que
-             sin este toolbar el doctor no tenía cómo ver/descargar el PDF
-             cargado. Ahora aparece arriba en ambos modos. */}
-        {pendingProtocol && savedSnapshot?.datos_json === pendingProtocol && (
-          <div className="bg-stone-50 border-b border-stone-200 px-3 py-2 flex items-center gap-2 overflow-x-auto">
-            <span
-              className="flex items-center gap-1.5 text-xs bg-stone-100 text-stone-600 px-2.5 py-1 rounded-full font-medium whitespace-nowrap flex-shrink-0"
-              title={savedSnapshot?.folio ? `Folio ${savedSnapshot.folio}` : "Archivado"}
-            >
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
-                <polyline points="20 6 9 17 4 12" />
-              </svg>
-              Archivado{savedSnapshot?.folio ? ` · ${savedSnapshot.folio}` : ""}
-            </span>
-            <div className="flex-1" />
-            <button
-              onClick={() => openPreview(pendingProtocol)}
-              className="flex items-center gap-1.5 text-xs border border-stone-300 hover:border-amber-400 bg-white text-stone-700 hover:text-amber-700 rounded-lg px-3 py-1.5 transition-colors whitespace-nowrap flex-shrink-0"
-              title="Ver el PDF archivado"
-            >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" />
-              </svg>
-              <span className="hidden sm:inline">Vista previa</span>
-            </button>
-            {savedSnapshot?.driveUrl && (
-              <a
-                href={savedSnapshot.driveUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-1.5 text-xs border border-stone-300 hover:border-amber-400 bg-white text-stone-700 hover:text-amber-700 rounded-lg px-3 py-1.5 transition-colors whitespace-nowrap flex-shrink-0"
-                title="Abrir en Google Drive"
-              >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /><polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" />
-                </svg>
-                <span className="hidden sm:inline">Drive</span>
-              </a>
-            )}
-            <button
-              onClick={handleDownloadArchived}
-              disabled={isDownloading}
-              className="flex items-center gap-1.5 text-xs bg-amber-500 hover:bg-amber-400 disabled:opacity-60 text-white rounded-lg px-3.5 py-1.5 font-semibold transition-colors shadow-sm whitespace-nowrap flex-shrink-0"
-              title="Descargar el PDF archivado"
-            >
-              {isDownloading ? (
-                <>
-                  <svg className="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                    <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-                  </svg>
-                  <span>Descargando…</span>
-                </>
-              ) : (
-                <>
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" />
-                  </svg>
-                  Descargar
-                </>
-              )}
-            </button>
-          </div>
-        )}
 
         {/* View swap wrapper — landing, voice y text mode comparten esta
              caja para poder cross-fade entre ellos sin reflow brusco. */}
@@ -1715,10 +1589,25 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
             {!previewLoading && (
               // iframe a ancho fijo de A4 (794px = 210mm @ 96dpi). En
               // desktop el contenedor es más ancho → centrado natural; en
-              // móvil el contenedor hace scroll horizontal y el pinch-zoom
-              // del parent escala todo. Eso da el comportamiento que el
-              // doctor quiere: arranca en page-width, permite hacer zoom.
-              <div className="mx-auto" style={{ width: 794 }}>
+              // iframe a 794px (A4 real). En desktop el contenedor lo
+              // centra sin problema. En móvil usamos CSS transform scale
+              // calculado al ancho del viewport para que el primer paint
+              // sea fit-to-screen (era el bug: "primera vez sale zoomed-in
+              // y no me deja pinch"). Pinch-zoom dentro del iframe srcDoc
+              // no funciona en iOS, pero al menos arranca legible. Para
+              // pinch real el doctor toca "Vista previa" otra vez (gesture
+              // mode → new tab nativo de Safari).
+              <div
+                className="mx-auto"
+                style={{
+                  width: 794,
+                  transformOrigin: "top center",
+                  transform:
+                    typeof window !== "undefined" && window.innerWidth < 768
+                      ? `scale(${Math.min(1, (window.innerWidth - 16) / 794)})`
+                      : "none",
+                }}
+              >
                 <iframe
                   srcDoc={previewHTML}
                   title="Vista previa del protocolo"
@@ -1726,7 +1615,7 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
                   sandbox="allow-same-origin"
                   style={{
                     width: 794,
-                    height: "calc(100vh - 60px)",
+                    height: "calc(100dvh - 60px)",
                     border: 0,
                     animation: "fadeIn 250ms ease-out",
                   }}

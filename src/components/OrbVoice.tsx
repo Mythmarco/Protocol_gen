@@ -99,12 +99,17 @@ float snoise(vec3 v){
 
 void main() {
   vec3 pos = position;
-  // Base displacement = noise * (idle floor + amp). Idle floor de 0.12 da
-  // movimiento visible sin audio. Amp-driven hasta 0.45 = orb dramático al
-  // hablar (era 0.06+0.35 antes, muy sutil para verse a distancia).
-  float noiseScale = 1.6 + uAmp * 0.4;
-  float n = snoise(pos * noiseScale + uTime * 0.45);
-  float disp = n * (0.12 + uAmp * 0.45);
+  // Capas de noise: combinamos dos octavas de simplex con escalas/velocidades
+  // distintas para que el orb se ondule más rico que con una sola onda.
+  // Resultado: movimiento visible sin audio + reactividad fuerte con audio.
+  float t = uTime;
+  float n1 = snoise(pos * (1.4 + uAmp * 0.3) + t * 0.55);
+  float n2 = snoise(pos * 2.8 + t * 0.95) * 0.5;
+  float n  = n1 + n2;
+  // Idle floor 0.18 (era 0.12), amp-driven 0.55 (era 0.45) → mucho más
+  // visible. El orb literalmente "respira" sin audio y se desfigura al
+  // hablar.
+  float disp = n * (0.18 + uAmp * 0.55);
   vec3 displaced = pos + normal * disp;
   vDisp = disp;
   vNormal = normalize(normalMatrix * normal);
@@ -204,10 +209,11 @@ function OrbMesh({ state, inputLevelRef, outputLevelRef }: OrbMeshProps) {
     );
     if (state === "thinking" || state === "idle") {
       // Fake amplitude para idle/thinking — orb "respira" sin audio.
-      // Subido de 0.18-0.30 a 0.35-0.55 para que el movimiento sea
-      // claramente visible (la sutilidad anterior parecía estatico).
+      // Subido a 0.55±0.25 para movimiento claramente visible. Doble onda
+      // con frecuencias distintas para que no se sienta robótico.
       idleAmpClock.current += delta;
-      const fake = 0.45 + 0.18 * Math.sin(idleAmpClock.current * 1.6);
+      const t = idleAmpClock.current;
+      const fake = 0.55 + 0.20 * Math.sin(t * 1.8) + 0.05 * Math.sin(t * 4.2);
       targetAmp = Math.max(targetAmp, fake);
     }
     dampedAmp.current += (targetAmp - dampedAmp.current) * 0.15;
@@ -230,10 +236,14 @@ function OrbMesh({ state, inputLevelRef, outputLevelRef }: OrbMeshProps) {
     );
 
     if (meshRef.current) {
-      // Más rango de escala (1.0 → 1.15) para que el "latido" del orb se
-      // perciba sin necesidad de mirar fijo.
-      const scale = 1.0 + dampedAmp.current * 0.15;
+      // Scale rango (1.0 → 1.2) + rotación lenta para que el orb se
+      // sienta "vivo" en idle. La rotación es muy sutil (0.15 rad/s)
+      // pero la combinación de noise + scale + rotación da el efecto
+      // tipo Apple Intelligence / ChatGPT Voice.
+      const scale = 1.0 + dampedAmp.current * 0.2;
       meshRef.current.scale.setScalar(scale);
+      meshRef.current.rotation.y += delta * 0.15;
+      meshRef.current.rotation.x += delta * 0.05;
     }
   });
 

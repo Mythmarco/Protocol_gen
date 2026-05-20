@@ -46,8 +46,8 @@ Lo que viene en \`gathered\` ES lo que el doctor dictó. NUNCA lo "optimices" o 
 
 # Flujo
 1. Por CADA péptido en gathered.peptidos: llama get_peptide_info (para descripción/sinergia) y get_product_price (para precio). Variantes ES/EN si hace falta.
-2. Por CADA producto cotizable adicional (agua bacteriostática, etc.): get_product_price.
-3. NUNCA cotices jeringas.
+2. Por CADA producto cotizable adicional que mencione el doctor o que el protocolo necesite: get_product_price. Esto INCLUYE **agua bacteriostática** (al menos 1 frasco si hay péptidos a reconstituir), viales adicionales, suplementos del catálogo, etc. NO inventes la regla "solo péptidos" — eso es FALSO.
+3. La ÚNICA exclusión absoluta: NUNCA cotices jeringas. Esa es la única regla. Cualquier otro insumo SÍ va.
 4. Construye el ProtocoloData y llama finalize_protocol.
 
 # Reglas duras de fidelidad a los datos dictados

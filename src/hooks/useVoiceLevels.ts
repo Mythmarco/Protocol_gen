@@ -144,8 +144,12 @@ export function useVoiceLevels({
     });
 
     // Resume AudioContext on visibility return (iOS suspends en background)
+    // ONLY si la sesión sigue activa. Si la sesión terminó, NO resumimos
+    // — eso re-engaging el indicador del mic en iOS aunque ya no estemos
+    // grabando, que es exactamente el bug que el doctor reportó al
+    // bloquear el celular / tomar screenshots.
     const onVisibility = () => {
-      if (document.visibilityState === "visible") {
+      if (document.visibilityState === "visible" && active && !cancelled) {
         audioCtxRef.current?.resume().catch(() => {});
       }
     };
@@ -163,16 +167,26 @@ export function useVoiceLevels({
       sourceRef.current = null;
       analyserRef.current = null;
       dataRef.current = null;
+      // CRÍTICO: detener los tracks del MediaStream (no solo desconectar
+      // el AudioNode). Si no, iOS Safari mantiene el indicador naranja
+      // del micrófono prendido aunque la sesión termine. Antes se hacía
+      // solo en unmount; ahora también cuando active=false (post-handoff).
+      micStreamRef.current?.getTracks().forEach((t) => t.stop());
+      micStreamRef.current = null;
+      // Suspender (no cerrar) el contexto — close() libera recursos pero
+      // hace que cualquier mic stream nuevo tarde en arrancar la próxima
+      // vez. Suspend mantiene el contexto vivo pero deja de procesar.
+      audioCtxRef.current?.suspend().catch(() => {});
     };
   }, [active, speaking, externalAmpRef]);
 
-  // Unmount: cerrar mic + AudioContext.
+  // Unmount FINAL: cierra AudioContext completamente. Cualquier mic stream
+  // ya fue stopped por el cleanup del effect anterior.
   useEffect(() => {
+    const ctxRef = audioCtxRef;
     return () => {
-      micStreamRef.current?.getTracks().forEach((t) => t.stop());
-      micStreamRef.current = null;
-      audioCtxRef.current?.close().catch(() => {});
-      audioCtxRef.current = null;
+      ctxRef.current?.close().catch(() => {});
+      ctxRef.current = null;
     };
   }, []);
 
