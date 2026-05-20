@@ -305,21 +305,60 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
   // Declarado ANTES de handleSend porque handleSend lo llama. JS hoisting no
   // aplica a useCallback (vs function declaration), así que el orden léxico
   // importa — el lint react-hooks/set-state-in-effect lo rechazaba antes.
-  const openPreview = useCallback(async (protocol: ProtocoloData) => {
-    // En móvil, el iframe-modal tiene problemas conocidos con pinch-zoom
-    // (iOS Safari ignora el viewport meta dentro de iframes), así que
-    // abrimos el HTML como pestaña nativa de Safari donde el zoom funciona.
-    // En desktop seguimos con el modal.
-    if (isMobileViewport()) {
-      // Abrir la pestaña INMEDIATAMENTE — si la abrimos después del await
-      // Safari la bloquea como popup (solo permite window.open dentro del
-      // gesture-handler de un click).
-      const tab = window.open("", "_blank");
-      if (tab) {
-        tab.document.write(
-          '<!doctype html><html><body style="margin:0;font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;color:#888"><p>Cargando vista previa…</p></body></html>'
-        );
+  // Preview tiene DOS modos:
+  //   - "auto"    → invocado SIN user-gesture (al terminar el handoff, etc.)
+  //                 Usa el modal in-app. window.open desde un async post-tool
+  //                 lo bloquea iOS Safari como popup, así que NUNCA intentamos.
+  //   - "gesture" → invocado desde un tap directo del doctor (botón Vista
+  //                 previa). En móvil abrimos new tab para pinch-zoom nativo;
+  //                 en desktop usamos el modal igual.
+  const openPreview = useCallback(
+    async (
+      protocol: ProtocoloData,
+      source: "auto" | "gesture" = "gesture"
+    ) => {
+      const wantsNewTab = source === "gesture" && isMobileViewport();
+
+      if (wantsNewTab) {
+        // Tab nueva SOLO dentro del gesture handler (tap). Si llegamos aquí
+        // desde un async post-tool, fallaría — por eso obligamos a que el
+        // caller marque "gesture" explícitamente.
+        const tab = window.open("", "_blank");
+        if (tab) {
+          tab.document.write(
+            '<!doctype html><html><body style="margin:0;font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;color:#888"><p>Cargando vista previa…</p></body></html>'
+          );
+        }
+        try {
+          const res = await fetch("/api/preview", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ protocolData: protocol }),
+          });
+          if (!res.ok) throw new Error("preview failed");
+          const html = await res.text();
+          if (tab) {
+            const htmlWithClose = injectMobilePreviewCloseButton(html);
+            tab.document.open();
+            tab.document.write(htmlWithClose);
+            tab.document.close();
+          }
+        } catch (err) {
+          console.error(err);
+          if (tab) {
+            tab.document.body.innerHTML =
+              "<p style='padding:2rem;font-family:sans-serif'>No se pudo cargar la vista previa.</p>";
+          }
+        }
+        return;
       }
+
+      // Modal in-app (desktop siempre, móvil sólo en auto-open post-handoff).
+      // El modal tiene botón "Cerrar" claro arriba y opción de "Abrir en
+      // pestaña" para que el doctor pueda activar pinch-zoom si quiere.
+      setPreviewOpen(true);
+      setPreviewLoading(true);
+      setPreviewHTML("");
       try {
         const res = await fetch("/api/preview", {
           method: "POST",
@@ -328,42 +367,18 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
         });
         if (!res.ok) throw new Error("preview failed");
         const html = await res.text();
-        if (tab) {
-          const htmlWithClose = injectMobilePreviewCloseButton(html);
-          tab.document.open();
-          tab.document.write(htmlWithClose);
-          tab.document.close();
-        }
+        setPreviewHTML(html);
       } catch (err) {
         console.error(err);
-        if (tab) {
-          tab.document.body.innerHTML =
-            "<p style='padding:2rem;font-family:sans-serif'>No se pudo cargar la vista previa.</p>";
-        }
+        setPreviewHTML(
+          "<p style='padding:2rem;font-family:sans-serif'>No se pudo cargar la vista previa.</p>"
+        );
+      } finally {
+        setPreviewLoading(false);
       }
-      return;
-    }
-
-    // Desktop: modal con iframe (zoom no es problema en monitor)
-    setPreviewOpen(true);
-    setPreviewLoading(true);
-    setPreviewHTML("");
-    try {
-      const res = await fetch("/api/preview", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ protocolData: protocol }),
-      });
-      if (!res.ok) throw new Error("preview failed");
-      const html = await res.text();
-      setPreviewHTML(html);
-    } catch (err) {
-      console.error(err);
-      setPreviewHTML("<p style='padding:2rem;font-family:sans-serif'>No se pudo cargar la vista previa.</p>");
-    } finally {
-      setPreviewLoading(false);
-    }
-  }, []);
+    },
+    []
+  );
 
   const handleSend = useCallback(async () => {
     const text = input.trim();
@@ -418,8 +433,8 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
       const protocol = extractProtocolJSON(fullText);
       if (protocol) {
         setPendingProtocol(protocol);
-        // Auto-open preview when a protocol is generated
-        openPreview(protocol);
+        // "auto" — post-stream, sin user gesture. En móvil debe ser modal.
+        openPreview(protocol, "auto");
       }
     } catch (err) {
       console.error(err);
@@ -875,8 +890,12 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
     window.setTimeout(() => setLoadingProtocolFromHistory(false), 280);
   };
 
+  // h-[100dvh] = "dynamic viewport height" — en iOS Safari ajusta su
+  // altura cuando la URL bar se muestra/oculta. h-screen (100vh) usa
+  // SIEMPRE el max viewport y dejaba contenido tapado por la URL bar en
+  // sesiones largas. dvh es la solución estándar 2026 para PWAs.
   return (
-    <div className="flex h-screen bg-stone-50 font-sans overflow-hidden">
+    <div className="flex h-[100dvh] bg-stone-50 font-sans overflow-hidden">
       {/* Sidebar (desktop only — mobile uses bottom nav) */}
       <aside
         className={`hidden md:flex flex-col bg-stone-900 text-stone-100 transition-all duration-300 ${
@@ -1206,7 +1225,10 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
               doctorName={(user.name || user.email.split("@")[0]).split(/\s+/)[0]}
               onProtocolGenerated={(data) => {
                 setPendingProtocol(data);
-                openPreview(data);
+                // "auto" = invocación post-handoff (sin user gesture). En
+                // iOS PWA standalone debe usar modal in-app, NO window.open
+                // (que sería bloqueado como popup tras el await del tool).
+                openPreview(data, "auto");
               }}
               onTranscriptChange={setVoiceTranscript}
               initialTranscript={voiceSeed}

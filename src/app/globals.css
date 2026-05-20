@@ -15,6 +15,22 @@
   --font-sans: var(--font-dm-sans);
 }
 
+/* App-shell lockdown — best practice 2026 para PWA mobile-first (ChatGPT
+   Voice / ElevenLabs / Vapi pattern):
+   1. html y body altura fija al viewport
+   2. overflow:hidden en ambos para que el documento NUNCA scrollee
+   3. overscroll-behavior:none mata el rubber-band de iOS en el root
+   4. La única zona scrollable es el contenedor explícito del chat /
+      transcript (con overscroll-behavior:contain para atrapar el bounce
+      dentro de ese contenedor).
+   Sin esto el page entero se podía desplazar verticalmente y al soltar
+   "volvía a su lugar" — exactamente el bug reportado en mobile. */
+html, body {
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
 body {
   background: var(--background);
   color: var(--foreground);

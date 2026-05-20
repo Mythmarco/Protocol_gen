@@ -799,14 +799,23 @@ export default function VoiceAgent({
 
   const isThinking = status === "thinking";
 
+  // Voice shell — SOTA pattern (ChatGPT Voice / ElevenLabs / Vapi):
+  //   - Outer: flex column, items centered, flex-1 + min-h-0 (NO
+  //     justify-center porque eso movía el orb cuando crecía el transcript).
+  //   - Stage (orb + mic + status): flex-shrink-0 → nunca se comprime,
+  //     siempre visible aunque haya 50 mensajes.
+  //   - Transcript: flex-1 min-h-0 overflow-y-auto + overscroll-behavior
+  //     contain — ÚNICA zona scrollable de la app. Atrapa el bounce de iOS
+  //     para que no se propague al documento.
   return (
-    <div className="flex flex-col items-center justify-center flex-1 px-4 py-8 gap-6">
-      {/* Stage — orb arriba (visualizador audio-reactivo) + mic button abajo
-          (toggle de sesión). Mismo orb para todos los estados; el shader
-          cambia color por orbState. Reemplaza el AIOrb+Waveform separados. */}
-      <div className="flex flex-col items-center gap-5">
+    <div className="flex flex-col items-center flex-1 min-h-0 px-4 pt-4 pb-2 gap-3">
+      {/* Stage — orb arriba + mic button abajo. flex-shrink-0 garantiza
+          que NUNCA se comprime cuando el transcript crece (era el bug que
+          empujaba el orb fuera de pantalla). Tamaño del orb bajado a
+          140/160 para dejar más espacio vertical al transcript en móvil. */}
+      <div className="flex flex-col items-center gap-3 flex-shrink-0">
         <OrbVoice
-          size={typeof window !== "undefined" && window.innerWidth < 640 ? 200 : 240}
+          size={typeof window !== "undefined" && window.innerWidth < 640 ? 140 : 160}
           state={orbState}
           inputLevelRef={inputLevelRef}
           outputLevelRef={outputLevelRef}
@@ -817,7 +826,7 @@ export default function VoiceAgent({
         <button
           onClick={isActive ? stopVoice : startVoice}
           disabled={status === "connecting" || isThinking}
-          className={`relative w-20 h-20 rounded-full flex items-center justify-center shadow-lg border transition-all duration-200
+          className={`relative w-16 h-16 rounded-full flex items-center justify-center shadow-lg border transition-all duration-200
           ${
             status === "listening" || status === "speaking"
               ? "bg-white border-stone-200 hover:bg-stone-50 active:scale-95"
@@ -854,7 +863,7 @@ export default function VoiceAgent({
         </button>
       </div>
 
-      <div className="text-center min-h-[3rem]">
+      <div className="text-center min-h-[2.5rem] flex-shrink-0">
         <p className={`text-sm font-medium transition-colors ${status === "error" ? "text-red-600" : "text-stone-700"}`}>
           {statusLabel}
         </p>
@@ -890,12 +899,17 @@ export default function VoiceAgent({
       </div>
 
       {transcript.length > 0 && (
-        <div className="w-full max-w-2xl bg-white border border-stone-200 rounded-2xl p-4 shadow-sm flex-1 min-h-0 overflow-y-auto">
-          {/* Antes tenía max-h-[40vh] fijo que cortaba transcripts largos y
-              dejaba el bottomActionCard fuera de vista. Ahora el contenedor
-              usa flex-1 para llenar el espacio disponible y scrollea
-              naturalmente; el bottomActionCard queda siempre al final del
-              scroll y bottomRef.scrollIntoView lo trae a la vista. */}
+        <div
+          className="w-full max-w-2xl bg-white border border-stone-200 rounded-2xl p-4 shadow-sm flex-1 min-h-0 overflow-y-auto"
+          // overscroll-behavior:contain → si el doctor hace pull-to-refresh
+          // dentro del transcript, el rubber-band SE QUEDA aquí (no se
+          // propaga al documento ni al PWA shell). Combinado con el lock
+          // a nivel html/body, mata el "page scroll" entero.
+          style={{ overscrollBehavior: "contain", WebkitOverflowScrolling: "touch" }}
+        >
+          {/* flex-1 min-h-0 = la única zona scrollable del voice mode.
+              El orb + mic + status arriba son flex-shrink-0 (nunca se
+              comprimen); el transcript fluye dentro del espacio restante. */}
           <div className="space-y-3">
             {transcript.map((entry) => (
               <div key={entry.id} className={`flex ${entry.role === "user" ? "justify-end" : "justify-start"}`}>
