@@ -9,13 +9,14 @@
 
 // Audio-reactive AI orb (R3F + GLSL shader).
 //
-// Visual = una IcosahedronGeometry con vertex displacement controlado por
-// simplex noise + amplitud RMS. Fragment shader pinta un gradiente radial
-// con fresnel rim. Mismo orb para todos los estados; solo cambian los
-// colores via uniforms que interpolamos suavemente al cambiar de state.
+// Visual = una esfera redonda con NUBE DE COLOR INTERNA. El movimiento NO
+// vive en la geometría (vertex displacement) sino en el fragment shader
+// (simplex noise 3D animado mezclado con el normal de la esfera). Esto
+// mantiene la silueta perfectamente redonda — el doctor reportó "picos"
+// y "se corta del borde superior" cuando el displacement era alto.
 //
-// Patrón inspirado en ElevenLabs Orb, Vapi y Gemini Live — consenso 2026
-// para voice agents: un solo orb que reemplaza a "orb + waveform" separados.
+// Patrón inspirado en Apple Intelligence / ChatGPT Voice / ElevenLabs:
+// orb sólido afuera, plasma/aurora adentro.
 //
 // Performance: sampling de amplitud NUNCA ocurre aquí — lo hace el hook
 // useVoiceLevels desacoplado del rAF. useFrame solo lee refs y escribe
@@ -29,14 +30,15 @@ export type OrbState = "idle" | "listening" | "speaking" | "thinking";
 
 interface OrbVoiceProps {
   /**
-   * Tamaño en px del canvas (orb llena ~80% del canvas).
-   * Default 120 para mantener compatibilidad con el componente viejo.
+   * Tamaño en px del canvas. La esfera ocupa ~70% del canvas (camera FOV
+   * 50 + radio 1 + z=3.0 deja ~30% de aire alrededor para que el glow
+   * exterior no se corte cuando el orb respira).
    */
   size?: number;
   className?: string;
   /**
-   * Estado actual del agente. Solo afecta colores; la geometría reacciona
-   * a inputLevelRef/outputLevelRef.
+   * Estado actual del agente. Solo afecta colores; el patrón interno
+   * reacciona a inputLevelRef/outputLevelRef.
    */
   state?: OrbState;
   /** Amplitud del mic 0-1 (poblada por useVoiceLevels). */
@@ -45,28 +47,29 @@ interface OrbVoiceProps {
   outputLevelRef?: RefObject<number>;
 }
 
-// Paleta por estado — RGB 0-1 para GLSL. Saturación REAL para que el orb
-// destaque visiblemente contra el fondo cream (#f5f3f1) del app. La versión
-// anterior usaba grises casi-blancos que se confundían con el fondo y
-// hacían parecer que el orb era estático.
-const COLORS: Record<OrbState, { a: [number, number, number]; b: [number, number, number] }> = {
-  // Idle: ámbar cálido suave → platino. Visible pero no agresivo.
-  idle:      { a: [0.95, 0.69, 0.34], b: [0.66, 0.66, 0.69] },
-  // Listening (doctor habla): cyan profundo → cyan claro. "Recibiendo".
-  listening: { a: [0.22, 0.65, 0.92], b: [0.62, 0.86, 1.00] },
-  // Speaking (IA responde): ámbar cálido → coral (paleta marca). Activo.
-  speaking:  { a: [0.95, 0.55, 0.20], b: [0.98, 0.78, 0.42] },
-  // Thinking: violeta-azulado → lavanda. Contemplativo, diferenciado.
-  thinking:  { a: [0.42, 0.40, 0.78], b: [0.72, 0.71, 0.94] },
+// Paleta por estado — RGB 0-1 para GLSL. Tres colores por estado para que
+// la nube interna tenga profundidad (en vez de un gradiente plano 2-color).
+const COLORS: Record<
+  OrbState,
+  { a: [number, number, number]; b: [number, number, number]; c: [number, number, number] }
+> = {
+  // Idle: ámbar cálido + coral + crema. Marca Peptides4ALL en reposo.
+  idle:      { a: [0.95, 0.69, 0.34], b: [0.98, 0.52, 0.32], c: [0.99, 0.88, 0.66] },
+  // Listening (doctor habla): cyan + azul profundo + blanco. "Recibiendo".
+  listening: { a: [0.30, 0.72, 0.96], b: [0.18, 0.40, 0.85], c: [0.85, 0.95, 1.00] },
+  // Speaking (IA responde): naranja vibrante + ámbar + crema. Activo.
+  speaking:  { a: [0.98, 0.55, 0.22], b: [0.95, 0.30, 0.20], c: [0.99, 0.86, 0.55] },
+  // Thinking: violeta + magenta + lavanda. Contemplativo, diferenciado.
+  thinking:  { a: [0.52, 0.32, 0.82], b: [0.82, 0.36, 0.78], c: [0.78, 0.72, 0.96] },
 };
 
-// Vertex shader: simplex noise 3D adaptado de https://github.com/ashima/webgl-noise (MIT).
-// El displacement combina amplitud uniform (uAmp) y simplex 3D + tiempo
-// lento para "respiración" orgánica.
+// Vertex shader: displacement MUY SUAVE — solo lo justo para que la esfera
+// "respire" sutilmente al hablar. La silueta sigue siendo casi un círculo
+// perfecto. Toda la acción visual vive en el fragment shader.
 const vertexShader = /* glsl */ `
 varying vec3 vNormal;
 varying vec3 vViewDir;
-varying float vDisp;
+varying vec3 vPos;
 
 uniform float uTime;
 uniform float uAmp;
@@ -99,19 +102,14 @@ float snoise(vec3 v){
 
 void main() {
   vec3 pos = position;
-  // Capas de noise: combinamos dos octavas de simplex con escalas/velocidades
-  // distintas para que el orb se ondule más rico que con una sola onda.
-  // Resultado: movimiento visible sin audio + reactividad fuerte con audio.
-  float t = uTime;
-  float n1 = snoise(pos * (1.4 + uAmp * 0.3) + t * 0.55);
-  float n2 = snoise(pos * 2.8 + t * 0.95) * 0.5;
-  float n  = n1 + n2;
-  // Idle floor 0.18 (era 0.12), amp-driven 0.55 (era 0.45) → mucho más
-  // visible. El orb literalmente "respira" sin audio y se desfigura al
-  // hablar.
-  float disp = n * (0.18 + uAmp * 0.55);
+  // Displacement bajísimo (0.015 idle, +0.05 con audio máximo). Suficiente
+  // para que la esfera respire al hablar pero NUNCA crea picos visibles
+  // en la silueta. El bug "se corta del borde superior" venía de
+  // disp=0.18+0.55*uAmp que producía spikes radiales.
+  float n = snoise(pos * 1.6 + uTime * 0.45);
+  float disp = n * (0.015 + uAmp * 0.05);
   vec3 displaced = pos + normal * disp;
-  vDisp = disp;
+  vPos = pos; // para muestrear noise en el fragment
   vNormal = normalize(normalMatrix * normal);
   vec4 mv = modelViewMatrix * vec4(displaced, 1.0);
   vViewDir = normalize(-mv.xyz);
@@ -119,34 +117,83 @@ void main() {
 }
 `;
 
+// Fragment shader: aquí vive la "nube de colores" interna. Dos octavas de
+// simplex noise 3D animadas mezclan los 3 colores del estado dentro de la
+// esfera. Fresnel rim agrega el halo en el borde. La amplitud (uAmp) hace
+// que la nube se mueva más rápido cuando el doctor o la IA hablan.
 const fragmentShader = /* glsl */ `
 precision highp float;
 varying vec3 vNormal;
 varying vec3 vViewDir;
-varying float vDisp;
+varying vec3 vPos;
 
 uniform vec3 uColorA;
 uniform vec3 uColorB;
+uniform vec3 uColorC;
 uniform float uAmp;
+uniform float uTime;
+
+vec3 mod289(vec3 x){return x-floor(x*(1.0/289.0))*289.0;}
+vec4 mod289(vec4 x){return x-floor(x*(1.0/289.0))*289.0;}
+vec4 permute(vec4 x){return mod289(((x*34.0)+1.0)*x);}
+vec4 taylorInvSqrt(vec4 r){return 1.79284291400159-0.85373472095314*r;}
+float snoise(vec3 v){
+  const vec2 C=vec2(1.0/6.0,1.0/3.0); const vec4 D=vec4(0.0,0.5,1.0,2.0);
+  vec3 i=floor(v+dot(v,C.yyy)); vec3 x0=v-i+dot(i,C.xxx);
+  vec3 g=step(x0.yzx,x0.xyz); vec3 l=1.0-g; vec3 i1=min(g.xyz,l.zxy); vec3 i2=max(g.xyz,l.zxy);
+  vec3 x1=x0-i1+C.xxx; vec3 x2=x0-i2+C.yyy; vec3 x3=x0-D.yyy;
+  i=mod289(i);
+  vec4 p=permute(permute(permute(i.z+vec4(0.0,i1.z,i2.z,1.0))+i.y+vec4(0.0,i1.y,i2.y,1.0))+i.x+vec4(0.0,i1.x,i2.x,1.0));
+  float n_=0.142857142857; vec3 ns=n_*D.wyz-D.xzx;
+  vec4 j=p-49.0*floor(p*ns.z*ns.z);
+  vec4 x_=floor(j*ns.z); vec4 y_=floor(j-7.0*x_);
+  vec4 x=x_*ns.x+ns.yyyy; vec4 y=y_*ns.x+ns.yyyy; vec4 h=1.0-abs(x)-abs(y);
+  vec4 b0=vec4(x.xy,y.xy); vec4 b1=vec4(x.zw,y.zw);
+  vec4 s0=floor(b0)*2.0+1.0; vec4 s1=floor(b1)*2.0+1.0;
+  vec4 sh=-step(h,vec4(0.0));
+  vec4 a0=b0.xzyw+s0.xzyw*sh.xxyy; vec4 a1=b1.xzyw+s1.xzyw*sh.zzww;
+  vec3 p0=vec3(a0.xy,h.x); vec3 p1=vec3(a0.zw,h.y); vec3 p2=vec3(a1.xy,h.z); vec3 p3=vec3(a1.zw,h.w);
+  vec4 norm=taylorInvSqrt(vec4(dot(p0,p0),dot(p1,p1),dot(p2,p2),dot(p3,p3)));
+  p0*=norm.x; p1*=norm.y; p2*=norm.z; p3*=norm.w;
+  vec4 m=max(0.6-vec4(dot(x0,x0),dot(x1,x1),dot(x2,x2),dot(x3,x3)),0.0);
+  m=m*m; return 42.0*dot(m*m,vec4(dot(p0,x0),dot(p1,x1),dot(p2,x2),dot(p3,x3)));
+}
 
 void main() {
-  // Dos fresnels: uno para la transición de color (suave), otro para el
-  // alpha de borde (decay más agresivo para que el orb se funda con el
-  // fondo sin línea visible — el patrón de ElevenLabs/Pi).
+  // Velocidad del flujo de la nube: base lenta + bump con amplitud.
+  float speed = 0.35 + uAmp * 0.9;
+  vec3 q = vPos * 1.8 + vec3(0.0, uTime * speed, uTime * speed * 0.55);
+
+  // Dos octavas de simplex 3D mezcladas → patrón orgánico, sin parecer
+  // grid. Normalizamos a 0-1.
+  float n1 = snoise(q);
+  float n2 = snoise(q * 2.3 + vec3(uTime * 0.25));
+  float cloud = (n1 * 0.65 + n2 * 0.35) * 0.5 + 0.5;
+
+  // Tercer noise para decidir qué color usar (A, B o C) en cada zona.
+  float pick = snoise(q * 1.2 + vec3(uTime * 0.15)) * 0.5 + 0.5;
+
+  // Mezcla 3-color: pick < 0.5 → A↔B; pick ≥ 0.5 → B↔C. Suaviza con cloud.
+  vec3 c1 = mix(uColorA, uColorB, smoothstep(0.0, 0.55, pick));
+  vec3 c2 = mix(uColorB, uColorC, smoothstep(0.45, 1.0, pick));
+  vec3 cloudCol = mix(c1, c2, smoothstep(0.40, 0.60, pick));
+
+  // Brillo interno modulado por la densidad del noise — zonas más densas
+  // brillan más, como una nube de plasma.
+  cloudCol *= 0.65 + cloud * 0.65;
+
+  // Fresnel: borde más brillante (halo). Curva 2.0 para halo suave, no anillo.
   float ndv = max(dot(vNormal, vViewDir), 0.0);
-  float fresnelColor = pow(1.0 - ndv, 2.2);
-  float fresnelEdge = pow(1.0 - ndv, 4.5);
+  float fresnel = pow(1.0 - ndv, 2.0);
 
-  // Transición de color centro → borde, modulada por amplitud para que el
-  // brillo del rim crezca al hablar.
-  vec3 base = mix(uColorA, uColorB, fresnelColor);
-  vec3 glow = vec3(1.0) * fresnelColor * (0.30 + uAmp * 0.45);
-  vec3 col = base + glow * 0.55;
-  col += vec3(vDisp * 0.35);
+  // Mix nube → halo en el borde.
+  vec3 rim = mix(uColorC, vec3(1.0), 0.45);
+  vec3 col = mix(cloudCol, rim, fresnel * (0.45 + uAmp * 0.35));
 
-  // Alpha decae fuerte en el borde extremo. Sin línea hard del mesh.
-  // Centro semi-translúcido (0.92) para look "vidrio iridiscente".
-  float alpha = 0.92 - fresnelEdge * 0.55;
+  // Alpha: silueta sólida pero borde extremo se funde suavemente con el
+  // fondo cream del app — evita la línea hard del mesh.
+  float edge = pow(1.0 - ndv, 5.5);
+  float alpha = 0.95 - edge * 0.35;
   gl_FragColor = vec4(col, alpha);
 }
 `;
@@ -178,23 +225,19 @@ function OrbMesh({ state, inputLevelRef, outputLevelRef }: OrbMeshProps) {
     uTime: { value: 0 },
     uAmp: { value: 0 },
     uColorA: {
-      value: new THREE.Color(
-        COLORS.idle.a[0],
-        COLORS.idle.a[1],
-        COLORS.idle.a[2]
-      ),
+      value: new THREE.Color(COLORS.idle.a[0], COLORS.idle.a[1], COLORS.idle.a[2]),
     },
     uColorB: {
-      value: new THREE.Color(
-        COLORS.idle.b[0],
-        COLORS.idle.b[1],
-        COLORS.idle.b[2]
-      ),
+      value: new THREE.Color(COLORS.idle.b[0], COLORS.idle.b[1], COLORS.idle.b[2]),
+    },
+    uColorC: {
+      value: new THREE.Color(COLORS.idle.c[0], COLORS.idle.c[1], COLORS.idle.c[2]),
     },
   });
   const dampedAmp = useRef(0);
   const dampedColorA = useRef<[number, number, number]>([...COLORS.idle.a]);
   const dampedColorB = useRef<[number, number, number]>([...COLORS.idle.b]);
+  const dampedColorC = useRef<[number, number, number]>([...COLORS.idle.c]);
   const idleAmpClock = useRef(0);
 
   // useFrame corre FUERA del render de React — es el rAF loop de R3F.
@@ -208,12 +251,12 @@ function OrbMesh({ state, inputLevelRef, outputLevelRef }: OrbMeshProps) {
       outputLevelRef?.current ?? 0
     );
     if (state === "thinking" || state === "idle") {
-      // Fake amplitude para idle/thinking — orb "respira" sin audio.
-      // Subido a 0.55±0.25 para movimiento claramente visible. Doble onda
-      // con frecuencias distintas para que no se sienta robótico.
+      // Fake amplitude para idle/thinking — la nube interna fluye sin
+      // audio. Más bajo que antes (0.35±0.15) porque ahora el movimiento
+      // vive en el fragment shader y no necesita amplitud alta para verse.
       idleAmpClock.current += delta;
       const t = idleAmpClock.current;
-      const fake = 0.55 + 0.20 * Math.sin(t * 1.8) + 0.05 * Math.sin(t * 4.2);
+      const fake = 0.35 + 0.12 * Math.sin(t * 1.8) + 0.05 * Math.sin(t * 4.2);
       targetAmp = Math.max(targetAmp, fake);
     }
     dampedAmp.current += (targetAmp - dampedAmp.current) * 0.15;
@@ -221,6 +264,7 @@ function OrbMesh({ state, inputLevelRef, outputLevelRef }: OrbMeshProps) {
     const tgt = COLORS[state];
     lerp3InPlace(dampedColorA.current, tgt.a, 0.06);
     lerp3InPlace(dampedColorB.current, tgt.b, 0.06);
+    lerp3InPlace(dampedColorC.current, tgt.c, 0.06);
 
     uniformsRef.current.uTime.value += delta;
     uniformsRef.current.uAmp.value = dampedAmp.current;
@@ -234,25 +278,30 @@ function OrbMesh({ state, inputLevelRef, outputLevelRef }: OrbMeshProps) {
       dampedColorB.current[1],
       dampedColorB.current[2]
     );
+    uniformsRef.current.uColorC.value.setRGB(
+      dampedColorC.current[0],
+      dampedColorC.current[1],
+      dampedColorC.current[2]
+    );
 
     if (meshRef.current) {
-      // Scale rango (1.0 → 1.2) + rotación lenta para que el orb se
-      // sienta "vivo" en idle. La rotación es muy sutil (0.15 rad/s)
-      // pero la combinación de noise + scale + rotación da el efecto
-      // tipo Apple Intelligence / ChatGPT Voice.
-      const scale = 1.0 + dampedAmp.current * 0.2;
+      // Scale rango muy contenido (1.0 → 1.06) — el "respirar" debe ser
+      // sutil, no agresivo. El audio se siente en la nube interna, no en
+      // el tamaño del orb. Rotación super lenta para que el patrón
+      // interno se sienta "vivo" sin marear.
+      const scale = 1.0 + dampedAmp.current * 0.06;
       meshRef.current.scale.setScalar(scale);
-      meshRef.current.rotation.y += delta * 0.15;
-      meshRef.current.rotation.x += delta * 0.05;
+      meshRef.current.rotation.y += delta * 0.08;
+      meshRef.current.rotation.x += delta * 0.03;
     }
   });
 
   return (
     <mesh ref={meshRef}>
-      {/* Subdiv 8 = ~5000 vértices, silueta circular real (vs 640 vértices
-          de subdiv 6 que se veía angular). iOS Safari corre fluido a 60fps
-          hasta ~10K vértices con shader ligero como el nuestro. */}
-      <icosahedronGeometry args={[1, 8]} />
+      {/* Subdiv 6 = ~640 vértices. Suficiente con displacement bajísimo;
+          la silueta se ve perfectamente circular. Subdiv 8 sería waste
+          porque el patrón vive en el fragment, no en la geometría. */}
+      <icosahedronGeometry args={[1, 6]} />
       <shaderMaterial
         uniforms={uniformsRef.current}
         vertexShader={vertexShader}
@@ -277,17 +326,18 @@ export default function OrbVoice({
       style={{ width: size, height: size }}
     >
       <Canvas
-        // iOS guards: dpr 2 en pantallas Retina hace texto/silueta crisp
-        // sin matar fps con un shader simple como el nuestro. antialias
-        // true es CRÍTICO para que la silueta del orb no se vea poligonal
-        // (era el "rough edges" que reportabas). MSAA es barato en GPU.
+        // dpr 2 en pantallas Retina para silueta crisp. antialias true es
+        // CRÍTICO para que la silueta no se vea poligonal.
         dpr={[1, 2]}
         gl={{ antialias: true, alpha: true, powerPreference: "low-power" }}
-        camera={{ position: [0, 0, 2.6], fov: 55 }}
+        // z=3.0 + fov 50 = ~28% aire alrededor del orb. Suficiente para
+        // que el scale 1.06 no recorte el orb contra el borde del canvas
+        // (era el bug "se corta del borde superior al respirar").
+        camera={{ position: [0, 0, 3.0], fov: 50 }}
         frameloop="always"
       >
         <ambientLight intensity={0.6} />
-        <pointLight position={[2, 3, 4]} intensity={0.7} />
+        <pointLight position={[2, 3, 4]} intensity={0.5} />
         <OrbMesh
           state={state}
           inputLevelRef={inputLevelRef}

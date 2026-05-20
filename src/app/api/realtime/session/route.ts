@@ -52,12 +52,16 @@ export async function POST() {
             // por OpenAI para apps móviles donde el doctor tiene el iPhone
             // en mano durante consulta.
             noise_reduction: { type: "near_field" },
-            // Whisper en modo auto-detect (sin language hardcodeado) para
-            // que el doctor pueda hablar inglés o español indistintamente y
-            // el agente le responda en el mismo idioma. El bug previo del
-            // cirílico/hebreo lo mitigamos con near_field noise_reduction
-            // arriba — Whisper auto-detect funciona bien con audio limpio.
-            transcription: { model: "gpt-realtime-whisper" },
+            // Whisper FORZADO a español. El auto-detect (sin language) fue
+            // un experimento para soportar inglés — falló en móvil donde
+            // el ruido ambiental hacía que Whisper devolviera transcripts
+            // en otros idiomas (cirílico, hebreo) en frases ambiguas. El
+            // doctor lo reportó como "mi transcripción sale en otro idioma".
+            // Si el doctor quiere inglés, lo pide explícito y el agente
+            // responde en inglés aunque el transcript en pantalla
+            // pueda salir traducido (trade-off aceptable — el audio es
+            // la fuente de verdad para el modelo).
+            transcription: { model: "gpt-realtime-whisper", language: "es" },
           },
           output: {
             format: { type: "audio/pcm", rate: 24000 },

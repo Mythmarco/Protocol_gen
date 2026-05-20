@@ -5,6 +5,7 @@ import { RealtimeAgent, RealtimeSession, tool } from "@openai/agents/realtime";
 import type { ProtocoloData } from "@/lib/protocol-types";
 import dynamic from "next/dynamic";
 import { useVoiceLevels } from "@/hooks/useVoiceLevels";
+import { injectMobilePreviewCloseButton } from "@/lib/preview-overlay";
 import type { OrbState } from "./OrbVoice";
 
 // Lazy-load three.js (~180KB) solo cuando el doctor entra a modo voz.
@@ -54,6 +55,11 @@ function buildTools(
   onHandoff: (data: ProtocoloData) => void,
   onHandoffComplete: () => void
 ) {
+  // Detección de móvil — solo intentamos pre-abrir tab en móvil porque en
+  // desktop el modal es más cómodo (pinch-zoom no aplica).
+  const isMobile = () =>
+    typeof window !== "undefined" && window.innerWidth < 768;
+
   const callBridge = async (path: string, body: unknown): Promise<string> => {
     const res = await fetch(path, {
       method: "POST",
@@ -232,24 +238,81 @@ function buildTools(
         // Strict-typed object → no JSON.parse crashes from control chars.
         const gathered = input as Record<string, unknown>;
 
+        // INTENTO 1 (móvil): abrir tab placeholder SINCRÓNICAMENTE en el
+        // mismo tick en que el tool execute arranca. En iOS PWA standalone
+        // a veces funciona aunque el gesture original (tap del mic) sea
+        // viejo — es la mejor heurística que tenemos. Si el popup blocker
+        // lo rechaza, `tab` será null y caemos al modal del ChatPage.
+        let bridgeTab: Window | null = null;
+        if (isMobile()) {
+          try {
+            bridgeTab = window.open("about:blank", "_blank");
+            if (bridgeTab) {
+              bridgeTab.document.write(
+                '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Generando protocolo…</title></head><body style="margin:0;background:#f5f3f1;font-family:-apple-system,BlinkMacSystemFont,system-ui,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;color:#666"><div style="text-align:center"><div style="font-size:42px;margin-bottom:14px">🧬</div><p style="margin:0;font-size:16px">Generando protocolo…</p><p style="margin:8px 0 0;font-size:13px;color:#999">Puede tardar hasta 1 minuto</p></div></body></html>'
+              );
+            }
+          } catch (err) {
+            console.warn("[voice] could not pre-open preview tab:", err);
+            bridgeTab = null;
+          }
+        }
+
         const res = await fetch("/api/generate-protocol", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ gathered }),
         });
         if (!res.ok) {
+          if (bridgeTab && !bridgeTab.closed) bridgeTab.close();
           const err = await res.json().catch(() => ({}));
           return JSON.stringify({
             error: err.error ?? `handoff failed: ${res.status}`,
           });
         }
         const { protocol } = (await res.json()) as { protocol: ProtocoloData };
+
+        // Si el tab placeholder está vivo, llenamos el HTML del preview.
+        // Si no (popup blocker o usuario lo cerró), el ChatPage abrirá el
+        // modal fallback via onHandoff.
+        let tabFilled = false;
+        if (bridgeTab && !bridgeTab.closed) {
+          try {
+            const previewRes = await fetch("/api/preview", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ protocolData: protocol }),
+            });
+            if (previewRes.ok) {
+              const html = await previewRes.text();
+              const htmlWithClose = injectMobilePreviewCloseButton(html);
+              bridgeTab.document.open();
+              bridgeTab.document.write(htmlWithClose);
+              bridgeTab.document.close();
+              tabFilled = true;
+            } else {
+              bridgeTab.close();
+            }
+          } catch (err) {
+            console.warn("[voice] preview render to bridge tab failed:", err);
+            try {
+              bridgeTab.close();
+            } catch {}
+          }
+        }
+
+        // Notifica al ChatPage. Le decimos si el tab ya quedó renderizado
+        // — si sí, ChatPage solo setea pendingProtocol; si no, abre el
+        // modal in-app como fallback.
         onHandoff(protocol);
         onHandoffComplete();
         return JSON.stringify({
           ok: true,
-          message: `Protocolo de ${protocol.paciente.nombre} listo. La vista previa se abrió. Di tu frase final de cierre y NO hagas más preguntas.`,
+          message: tabFilled
+            ? `Protocolo de ${protocol.paciente.nombre} listo. El PDF se abrió en una pestaña nueva. Di UNA frase corta de cierre y NO hagas más preguntas.`
+            : `Protocolo de ${protocol.paciente.nombre} listo. La vista previa está abajo. Di UNA frase corta de cierre y NO hagas más preguntas.`,
           paciente: protocol.paciente.nombre,
+          preview_opened_in_new_tab: tabFilled,
         });
       },
     }),
@@ -341,18 +404,16 @@ NO hagas un resumen final antes del handoff. El doctor ve la vista previa en pan
 
 Si el médico repite algo que ya te dio (porque pensaste que no lo capturaste), NO se lo vuelvas a confirmar — solo úsalo y avanza.
 
-# Language (bilingüe ES/EN — match al doctor)
-**Idioma de respuesta = idioma de la última frase completa del doctor.** Si el doctor habla en español, responde en español. Si habla en inglés, responde en inglés. La detección es por frase, no por palabra suelta — un nombre de péptido en inglés ("Retatrutide") dentro de una oración en español NO cuenta como cambio de idioma.
+# Language (default español — switch a inglés solo si el doctor lo pide explícito)
+Por default la conversación es en **español**. El transcriptor (Whisper) está configurado en español para evitar errores cuando el audio es ruidoso en móvil.
 
-Regla de transición suave:
-- Doctor: "Hola, vamos a hacer un protocolo." → Responde: "¿Para qué paciente?"
-- Doctor: "Hi, let's start a new patient." → Responde: "Sure, what's the patient's name?"
-- Doctor en español: "Retatrutide 15 mg" (nombre técnico en inglés) → Sigues en español. No es un cambio.
-- Doctor empieza en español, luego dice "actually let's switch to English" → Cambias a inglés desde ese turno.
+Si el doctor te dice explícitamente "hablemos en inglés" / "switch to English" / "let's do this in English", entonces:
+- Responde en inglés desde ese turno.
+- El transcript en pantalla puede salir traducido o raro porque Whisper sigue en español — IGNORA eso, tú confía en lo que el doctor dijo en audio.
 
-Si el audio es ambiguo (ruido, frase cortada), mantén el idioma del turno anterior — no inventes cambios.
+Si el doctor mezcla palabras técnicas en inglés dentro de una frase en español ("Retatrutide 15 mg"), NO es un cambio de idioma — sigue respondiendo en español.
 
-El idioma del **PDF final** (gathered.metadata.idioma) se decide aparte: pregúntalo explícitamente al doctor solo si no es obvio del contexto. El idioma del PDF puede diferir del idioma de la conversación (ej. conversación en español pero paciente prefiere PDF en inglés).
+El idioma del **PDF final** (gathered.metadata.idioma) se decide aparte: pregúntalo si no es obvio del contexto.
 
 # Reasoning
 - Para respuestas simples (reconocimientos, "ok", "entendido"), no razones — responde directo.
@@ -367,7 +428,7 @@ NO uses preambles cuando: la respuesta es inmediata, el médico solo confirma o 
 - Preguntas: UNA a la vez.
 - Confirmaciones de datos críticos (nombre paciente, dosis, frecuencia): repite el valor y pide "¿correcto?".
 - Datos cotidianos (peso, edad): solo confirma si no escuchaste claro.
-- Después del handoff: UNA frase corta tipo "Listo, aquí tienes el protocolo de [nombre]." NO leas el contenido.
+- Después del handoff: UNA frase corta y nada más. Ver sección de handoff abajo para la frase exacta. NO leas el contenido.
 
 # Tools
 
@@ -384,29 +445,32 @@ Llámalo cuando el doctor pregunte qué hay disponible en general ("¿qué pépt
 Útil para validar precios durante la conversación. El motor de razonamiento también valida después, así que no es obligatorio llamarlo durante la voz.
 
 ## handoff_to_reasoning (NO PIDAS CONFIRMACIÓN, solo ve)
-Esta tool dispara la generación del protocolo (GPT-5.5 + PDF + Drive). El doctor verá la vista previa al final y podrá pedir cambios, así que **no necesitas confirmar nada verbalmente** — eso solo lo hace repetitivo.
+Esta tool dispara la generación del protocolo (GPT-5.5 + PDF). El doctor verá la vista previa al final, así que **no necesitas confirmar nada verbalmente** antes — eso solo lo hace repetitivo.
 
-**Secuencia EXACTA (no la inviertas):**
-1. Di SOLO "Dame un momento mientras genero el protocolo." (UNA frase, no resúmenes ni listas)
+**Secuencia EXACTA — sigue al pie de la letra:**
+1. Di UNA SOLA frase corta: "Dame un momento mientras genero el protocolo." Punto. NO resúmenes, NO listas, NO "estoy procesando", NO nada más.
 2. INMEDIATAMENTE llama \`handoff_to_reasoning\` con los parámetros estructurados.
-3. **ESPERA EN SILENCIO** hasta que la tool devuelva una respuesta. Esto toma 20-60 segundos. Durante ESE TIEMPO no digas nada — NO digas "Listo", NO digas "ya casi", NO digas "preparando", NO digas NADA.
-4. **CUANDO** veas el resultado de la tool (la tool habrá devuelto con \`ok: true\` y un message): di EXACTAMENTE una vez: "Listo, aquí tienes el protocolo de [nombre]. Si necesitas cambios, toca el micrófono otra vez."
-5. Después de esa frase: **silencio absoluto**. La sesión se cierra sola.
+3. **SILENCIO ABSOLUTO** hasta que la tool te devuelva un \`function_call_output\` en tu contexto con \`ok: true\`. Esto toma 20-60 segundos.
+   - Durante esos 20-60s: NO hables. NO digas "Listo". NO digas "ya casi". NO digas "preparando". NO digas NADA.
+   - Si escuchas cualquier audio (ruido, el doctor, lo que sea), llama \`wait_for_user\`. NO contestes.
+4. CUANDO veas el \`function_call_output\` con \`ok: true\` Y un campo \`paciente: "..."\` en TU CONTEXTO: di EXACTAMENTE UNA VEZ:
+   - Si \`preview_opened_in_new_tab: true\`: "Listo, el protocolo de [nombre del paciente] se abrió en una pestaña nueva. Si necesitas cambios, toca el micrófono otra vez."
+   - Si \`preview_opened_in_new_tab: false\` (o no está): "Listo, el protocolo de [nombre del paciente] está abajo, toca 'Vista previa' para abrirlo. Si necesitas cambios, toca el micrófono otra vez."
+5. Después de esa frase: **silencio absoluto y total**. La sesión se cierra sola.
 
-**Regla crítica — NO ANTICIPES "Listo":**
-NUNCA digas "Listo, aquí tienes el protocolo…" antes de ver el resultado de la tool en tu contexto. Si lo dices antes, el doctor verá una vista previa vacía o equivocada porque el JSON aún no está generado.
-
-NO digas "¿Confirmas?", "¿Te parece bien?", "¿Estamos listos?" antes del handoff. El doctor revisa la vista previa.
-NO leas el JSON en voz. NO leas el contenido del protocolo (péptidos, dosis, total). La vista previa se abre sola.
-
-**REGLA DURA después del handoff exitoso (UNA SOLA VEZ):**
-- Di SOLO tu frase final ("Listo, aquí tienes el protocolo de [nombre]…") **una sola vez**.
-- Después: **silencio absoluto**. NO repitas la frase. NO llames ningún tool. NO hagas preguntas. NO respondas a nada más.
-- Si escuchas ruido o el médico dice algo, IGNÓRALO. La sesión se cierra automáticamente.
-- Si el médico necesita un cambio, va a tocar el micrófono otra vez para una nueva sesión.
+**Reglas duras post-handoff (CRITICAL — el doctor ya se quejó del bug):**
+- Di tu frase de cierre **UNA SOLA VEZ**. Nunca dos. Nunca tres.
+- Después de hablar: **no respondas a nada más**. Aunque el doctor diga algo, aunque haya ruido, aunque escuches el eco de tu propia voz. **Cero**.
+- Si por error te tienta repetir "Listo…", **PARA**. La sesión se cierra automáticamente en menos de 2 segundos.
 
 ❌ MAL: "Listo, aquí tienes el protocolo." (silencio) "Listo, aquí tienes el protocolo." (silencio) "Listo…"
-✅ BIEN: "Listo, aquí tienes el protocolo de Ana, si necesitas cambios toca el micrófono otra vez." (silencio absoluto hasta cierre)
+✅ BIEN: "Listo, el protocolo de Ana se abrió en una pestaña nueva, si necesitas cambios toca el micrófono otra vez." (silencio absoluto hasta cierre)
+
+**Regla crítica — NO ANTICIPES "Listo":**
+NUNCA digas "Listo…" antes de ver el \`function_call_output\` con \`ok: true\` en tu contexto. Si lo dices antes, el doctor ve una vista previa vacía porque el JSON aún no está generado. Esto YA pasó como bug — no lo repitas.
+
+NO digas "¿Confirmas?", "¿Te parece bien?", "¿Estamos listos?" antes del handoff.
+NO leas el JSON en voz. NO leas el contenido del protocolo (péptidos, dosis, total).
 
 ## wait_for_user (no-op, usar para silencio)
 Si el último audio es silencio, ruido de fondo, música, conversación lateral o habla que no se dirige a ti, llama \`wait_for_user\` y NO digas nada. No digas "estoy aquí", "no escuché", "tómate tu tiempo".
@@ -567,6 +631,32 @@ export default function VoiceAgent({
   // create_response:false del server.
   const postHandoffRef = useRef(false);
 
+  // Mic mute helper — accede al MediaStreamTrack del audio sender del
+  // WebRTC peer connection y lo des/habilita. Critico para:
+  //   1) Eco: cuando la IA habla, el mic captura su voz (especialmente en
+  //      móvil con altavoz). Whisper la transcribe como input del usuario,
+  //      el modelo se interrumpe a sí mismo. Mute mientras AI habla → fix.
+  //   2) Loop "Listo": después del handoff queremos garantizar que NO se
+  //      crea respuesta nueva por ruido ambiental. create_response:false
+  //      ayuda pero el mute es definitivo.
+  const setMicEnabled = useCallback((enabled: boolean) => {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const transport = sessionRef.current?.transport as any;
+      const pc: RTCPeerConnection | undefined =
+        transport?.pc ?? transport?.peerConnection ?? transport?._pc;
+      if (!pc) return;
+      for (const sender of pc.getSenders()) {
+        const track = sender.track;
+        if (track && track.kind === "audio") {
+          track.enabled = enabled;
+        }
+      }
+    } catch (err) {
+      console.warn("[voice] setMicEnabled failed:", err);
+    }
+  }, []);
+
   useEffect(() => {
     transcriptBottomRef.current?.scrollIntoView({ behavior: "smooth" });
     // También scrollea cuando el bottomActionCard cambia — al cargar un
@@ -655,18 +745,25 @@ export default function VoiceAgent({
           }
 
           // Marca "post-handoff": el listener de audio_stopped cierra la
-          // sesión 1.5s después de que el agente termine de hablar su frase
+          // sesión 1.2s después de que el agente termine de hablar su frase
           // "Listo…", lo que en práctica evita el bug de los Listos repetidos.
           postHandoffRef.current = true;
 
+          // Mute defensivo: el mic se queda apagado por el resto de la
+          // sesión post-handoff. Junto con create_response:false esto
+          // garantiza que NO se pueda crear una respuesta nueva (sin mic
+          // no hay VAD trigger).
+          setMicEnabled(false);
+
           // Backstop: si por alguna razón no llega audio_stopped, cierra
-          // a los 8s. (Era 10s; bajado porque agentes que hablan rápido
-          // dejaban demasiado tiempo para re-trigger.)
+          // a los 6s. Bajado de 8s porque ahora con mic muted y
+          // create_response:false el riesgo de "Listo repetido" es nulo
+          // — solo necesitamos esperar la frase actual del modelo.
           if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
           closeTimerRef.current = setTimeout(() => {
             cleanup();
             setStatus("idle");
-          }, 8000);
+          }, 6000);
         }),
         // "marin" and "cedar" are the highest-quality voices per OpenAI's
         // gpt-realtime-2 guide. Marin is warm/neutral, good for Spanish.
@@ -682,31 +779,49 @@ export default function VoiceAgent({
 
       // 4. Wire events
       session.on("audio_start", () => {
-        console.log("[voice] audio_start → speaking");
+        console.log("[voice] audio_start → speaking (muting mic)");
         setStatus("speaking");
+        // Mute mic mientras la IA habla — sin esto, el mic capta la voz
+        // de la IA (especialmente en móvil con altavoz), Whisper la
+        // transcribe como input del usuario y el agente se "interrumpe"
+        // o se escucha a sí mismo. echoCancellation de getUserMedia no
+        // es suficiente en iOS PWA cuando el audio output viene del SDK
+        // de Realtime (no del MediaStream local).
+        // Trade-off: el doctor no puede interrumpir mid-sentence (barge-
+        // in), pero la IA habla en frases cortas y el doctor puede tocar
+        // el mic STOP si necesita parar.
+        setMicEnabled(false);
       });
       session.on("audio_stopped", () => {
-        console.log("[voice] audio_stopped → listening");
+        console.log("[voice] audio_stopped → listening (unmuting mic)");
         setStatus("listening");
         // Reset amplitude so bars fall back to baseline immediately
         aiAmpRef.current = 0;
 
         // Si veníamos de un handoff exitoso, este audio_stopped es el
         // final de la frase "Listo, aquí tienes el protocolo…". Cierra
-        // sesión en 1.5s para que NO haya chance de que el modelo
-        // repita la frase o vuelva a hablar por ruido ambiental.
+        // sesión en 1.2s. NO re-habilitamos el mic — la sesión se cierra
+        // y el doctor inicia una nueva con un tap fresco si quiere cambios.
         if (postHandoffRef.current) {
           postHandoffRef.current = false;
           if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
           closeTimerRef.current = setTimeout(() => {
             cleanup();
             setStatus("idle");
-          }, 1500);
+          }, 1200);
+          return;
         }
+
+        // Re-habilita el mic para que el doctor pueda responder/seguir.
+        setMicEnabled(true);
       });
       session.on("audio_interrupted", () => {
         setStatus("listening");
         aiAmpRef.current = 0;
+        // El SDK interrumpió a la IA mid-speech (barge-in). Asegurarnos
+        // de re-habilitar el mic (puede haber quedado disabled del
+        // audio_start si el interrupt llegó antes del audio_stopped).
+        if (!postHandoffRef.current) setMicEnabled(true);
       });
 
       // PCM amplitude of each AI audio chunk → feeds the Waveform.
@@ -793,7 +908,7 @@ export default function VoiceAgent({
       setStatus("error");
       cleanup();
     }
-  }, [cleanup, doctorName, onProtocolGenerated, status, transcript]);
+  }, [cleanup, doctorName, onProtocolGenerated, setMicEnabled, status, transcript]);
 
   const statusLabel = (() => {
     switch (status) {
@@ -827,7 +942,7 @@ export default function VoiceAgent({
           140/160 para dejar más espacio vertical al transcript en móvil. */}
       <div className="flex flex-col items-center gap-3 flex-shrink-0">
         <OrbVoice
-          size={typeof window !== "undefined" && window.innerWidth < 640 ? 140 : 160}
+          size={typeof window !== "undefined" && window.innerWidth < 640 ? 112 : 132}
           state={orbState}
           inputLevelRef={inputLevelRef}
           outputLevelRef={outputLevelRef}
