@@ -119,7 +119,15 @@ export default function RootLayout({
           }}
         />
       </head>
-      <body className="min-h-full flex flex-col font-sans">
+      <body
+        className="min-h-full flex flex-col font-sans"
+        // El usuario reportó "pantalla en blanco" al abrir la PWA desde el
+        // ícono del home screen en iOS. Era el typical flash blanco del
+        // primer frame antes de que CSS+JS booteen. Background cream inline
+        // (= manifest.background_color) hace que el primer frame visible
+        // coincida con el splash y el resto del app.
+        style={{ background: "#f5f3f1" }}
+      >
         {children}
       </body>
     </html>

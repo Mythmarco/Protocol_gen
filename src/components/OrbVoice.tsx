@@ -125,16 +125,23 @@ uniform vec3 uColorB;
 uniform float uAmp;
 
 void main() {
-  // Fresnel rim — más brillo al borde según el ángulo de vista.
-  float fresnel = pow(1.0 - max(dot(vNormal, vViewDir), 0.0), 2.6);
-  vec3 base = mix(uColorA, uColorB, fresnel);
-  // Acento de brillo en el borde, más fuerte con amplitud (treble feel).
-  vec3 glow = vec3(1.0) * fresnel * (0.35 + uAmp * 0.45);
-  vec3 col = base + glow * 0.6;
-  // Sutil tinte por displacement (zonas elevadas más claras).
-  col += vec3(vDisp * 0.4);
-  // Alpha decae en el borde para que se vea "soft", no como bola sólida.
-  float alpha = 0.85 + fresnel * 0.15;
+  // Dos fresnels: uno para la transición de color (suave), otro para el
+  // alpha de borde (decay más agresivo para que el orb se funda con el
+  // fondo sin línea visible — el patrón de ElevenLabs/Pi).
+  float ndv = max(dot(vNormal, vViewDir), 0.0);
+  float fresnelColor = pow(1.0 - ndv, 2.2);
+  float fresnelEdge = pow(1.0 - ndv, 4.5);
+
+  // Transición de color centro → borde, modulada por amplitud para que el
+  // brillo del rim crezca al hablar.
+  vec3 base = mix(uColorA, uColorB, fresnelColor);
+  vec3 glow = vec3(1.0) * fresnelColor * (0.30 + uAmp * 0.45);
+  vec3 col = base + glow * 0.55;
+  col += vec3(vDisp * 0.35);
+
+  // Alpha decae fuerte en el borde extremo. Sin línea hard del mesh.
+  // Centro semi-translúcido (0.92) para look "vidrio iridiscente".
+  float alpha = 0.92 - fresnelEdge * 0.55;
   gl_FragColor = vec4(col, alpha);
 }
 `;
@@ -232,12 +239,16 @@ function OrbMesh({ state, inputLevelRef, outputLevelRef }: OrbMeshProps) {
 
   return (
     <mesh ref={meshRef}>
-      <icosahedronGeometry args={[1, 6]} />
+      {/* Subdiv 8 = ~5000 vértices, silueta circular real (vs 640 vértices
+          de subdiv 6 que se veía angular). iOS Safari corre fluido a 60fps
+          hasta ~10K vértices con shader ligero como el nuestro. */}
+      <icosahedronGeometry args={[1, 8]} />
       <shaderMaterial
         uniforms={uniformsRef.current}
         vertexShader={vertexShader}
         fragmentShader={fragmentShader}
         transparent
+        depthWrite={false}
       />
     </mesh>
   );
@@ -256,10 +267,12 @@ export default function OrbVoice({
       style={{ width: size, height: size }}
     >
       <Canvas
-        // iOS guards: limita devicePixelRatio (Retina mata fps en orb
-        // shader grande) y pide bajo consumo de GPU.
-        dpr={[1, 1.5]}
-        gl={{ antialias: false, alpha: true, powerPreference: "low-power" }}
+        // iOS guards: dpr 2 en pantallas Retina hace texto/silueta crisp
+        // sin matar fps con un shader simple como el nuestro. antialias
+        // true es CRÍTICO para que la silueta del orb no se vea poligonal
+        // (era el "rough edges" que reportabas). MSAA es barato en GPU.
+        dpr={[1, 2]}
+        gl={{ antialias: true, alpha: true, powerPreference: "low-power" }}
         camera={{ position: [0, 0, 2.6], fov: 55 }}
         frameloop="always"
       >

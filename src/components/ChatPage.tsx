@@ -1001,6 +1001,73 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
           </div>
         )}
 
+        {/* ARCHIVED toolbar — visible cuando el protocolo en pantalla YA está
+             guardado (cargado de historial o post-save). En text mode los
+             mismos botones aparecen inline en el banner del mensaje IA, pero
+             en voice mode los mensajes de ChatPage no se renderizan, así que
+             sin este toolbar el doctor no tenía cómo ver/descargar el PDF
+             cargado. Ahora aparece arriba en ambos modos. */}
+        {pendingProtocol && savedSnapshot?.datos_json === pendingProtocol && (
+          <div className="bg-stone-50 border-b border-stone-200 px-3 py-2 flex items-center gap-2 overflow-x-auto">
+            <span
+              className="flex items-center gap-1.5 text-xs bg-stone-100 text-stone-600 px-2.5 py-1 rounded-full font-medium whitespace-nowrap flex-shrink-0"
+              title={savedSnapshot?.folio ? `Folio ${savedSnapshot.folio}` : "Archivado"}
+            >
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+              Archivado{savedSnapshot?.folio ? ` · ${savedSnapshot.folio}` : ""}
+            </span>
+            <div className="flex-1" />
+            <button
+              onClick={() => openPreview(pendingProtocol)}
+              className="flex items-center gap-1.5 text-xs border border-stone-300 hover:border-amber-400 bg-white text-stone-700 hover:text-amber-700 rounded-lg px-3 py-1.5 transition-colors whitespace-nowrap flex-shrink-0"
+              title="Ver el PDF archivado"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" />
+              </svg>
+              <span className="hidden sm:inline">Vista previa</span>
+            </button>
+            {savedSnapshot?.driveUrl && (
+              <a
+                href={savedSnapshot.driveUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1.5 text-xs border border-stone-300 hover:border-amber-400 bg-white text-stone-700 hover:text-amber-700 rounded-lg px-3 py-1.5 transition-colors whitespace-nowrap flex-shrink-0"
+                title="Abrir en Google Drive"
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /><polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" />
+                </svg>
+                <span className="hidden sm:inline">Drive</span>
+              </a>
+            )}
+            <button
+              onClick={handleDownloadArchived}
+              disabled={isDownloading}
+              className="flex items-center gap-1.5 text-xs bg-amber-500 hover:bg-amber-400 disabled:opacity-60 text-white rounded-lg px-3.5 py-1.5 font-semibold transition-colors shadow-sm whitespace-nowrap flex-shrink-0"
+              title="Descargar el PDF archivado"
+            >
+              {isDownloading ? (
+                <>
+                  <svg className="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                  </svg>
+                  <span>Descargando…</span>
+                </>
+              ) : (
+                <>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" />
+                  </svg>
+                  Descargar
+                </>
+              )}
+            </button>
+          </div>
+        )}
+
         {/* View swap wrapper — landing, voice y text mode comparten esta
              caja para poder cross-fade entre ellos sin reflow brusco. */}
         <div
@@ -1008,6 +1075,12 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
           style={{
             opacity: viewTransition ? 0 : 1,
             transition: "opacity 200ms ease-out",
+            // Reserva espacio para el bottom nav fijo en móvil. Sin esto el
+            // último mensaje / composer queda tapado por el nav.
+            paddingBottom:
+              typeof window !== "undefined" && window.innerWidth < 768
+                ? "calc(64px + env(safe-area-inset-bottom))"
+                : 0,
           }}
         >
         {/* Overlay sutil de carga mientras /api/history/[id] termina. */}
@@ -1329,11 +1402,15 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
         </div>
         {/* /view swap wrapper */}
 
-        {/* Bottom nav (mobile only). Se OCULTA cuando hay un sheet/historial
-             abierto para evitar overlap visual y para que iOS no muestre el
-             nav debajo del modal por z-index gotchas. */}
+        {/* Bottom nav (mobile only). FIXED al fondo del viewport para que
+             siempre sirva como barra de navegación independiente del
+             contenido (el doctor lo pidió). El contenido por encima reserva
+             espacio con padding-bottom (ver view-swap wrapper). z-30 para
+             tapar contenido normal pero quedar DEBAJO del modal de historial
+             (z-60) cuando se abra. Y se oculta defensivamente con `hidden`
+             cuando hay un sheet abierto para que no compita visualmente. */}
         <nav
-          className={`md:hidden ${mobileSheet ? "hidden" : "flex"} items-center justify-around bg-white border-t border-stone-200 px-2 py-2 safe-area-inset-bottom`}
+          className={`md:hidden ${mobileSheet ? "hidden" : "flex"} fixed bottom-0 left-0 right-0 z-30 items-center justify-around bg-white border-t border-stone-200 px-2 py-2 safe-area-inset-bottom`}
         >
           <button
             onClick={handleNewChat}

@@ -42,14 +42,16 @@ export async function POST() {
         audio: {
           input: {
             format: { type: "audio/pcm", rate: 24000 },
-            // OpenAI Realtime Prompting Guide (2026): eagerness "low" para
-            // voice agents customer-facing — espera más antes de cortar al
-            // usuario, ideal cuando el doctor dicta listas largas (péptidos,
-            // dosis). Default "medium" interrumpía la dictación.
+            // semantic_vad + eagerness "low" — espera más antes de cortar
+            // al usuario. Doctor reportó interrupciones fantasma cuando NO
+            // estaba hablando: el VAD detectaba ruido ambiental como voz.
             turn_detection: { type: "semantic_vad", eagerness: "low" },
-            // gpt-realtime-whisper es el modelo streaming oficial que
-            // reemplaza whisper-1 desde la actualización audio de OpenAI
-            // de Nov 2025 — mejor latencia y precisión en español.
+            // near_field = micrófono de teléfono en mano (vs far_field para
+            // micrófonos de habitación tipo Alexa). Filtra mucho mejor el
+            // ruido de fondo y reduce falsos positivos del VAD. Recomendado
+            // por OpenAI para apps móviles donde el doctor tiene el iPhone
+            // en mano durante consulta.
+            noise_reduction: { type: "near_field" },
             transcription: { model: "gpt-realtime-whisper" },
           },
           output: {
