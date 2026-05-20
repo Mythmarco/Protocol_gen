@@ -6,13 +6,10 @@ import remarkGfm from "remark-gfm";
 import { PROTOCOL_JSON_MARKER, type ProtocoloData } from "@/lib/protocol-types";
 import VoiceAgent from "./VoiceAgent";
 import AIOrb from "./AIOrb";
-
-interface HistoryItem {
-  id: string;
-  paciente_nombre: string;
-  descripcion: string;
-  fecha_creacion: string;
-}
+import LandingHero from "./chat/LandingHero";
+import MobileHistoryScreen from "./chat/MobileHistoryScreen";
+import ThinkingIndicator from "./chat/ThinkingIndicator";
+import type { HistoryItem } from "./chat/types";
 
 interface Message {
   role: "user" | "assistant";
@@ -113,400 +110,6 @@ function injectMobilePreviewCloseButton(html: string): string {
   return html + overlay;
 }
 
-const THINKING_LABELS: Record<"thinking" | "protocol", string[]> = {
-  thinking: [
-    "Pensando…",
-    "Analizando tu solicitud…",
-    "Consultando el catálogo…",
-    "Validando datos clínicos…",
-    "Procesando…",
-  ],
-  protocol: [
-    "Generando protocolo…",
-    "Buscando precios actualizados…",
-    "Calculando dosis y unidades de jeringa…",
-    "Armando el calendario semanal…",
-    "Redactando indicaciones…",
-    "Cerrando la cotización…",
-    "Casi listo…",
-  ],
-};
-
-const QUICK_STARTS = [
-  "Paciente Diego de la Garza, 87 kg, 1.76 m, 37 años, mes 2 pérdida de peso visceral",
-  "Nuevo protocolo mes 1 para Ana López, 68 kg, 1.65 m, 42 años, energía y recuperación",
-];
-
-function LandingHero({
-  doctorFirstName,
-  onPick,
-  onQuickStart,
-}: {
-  doctorFirstName: string;
-  onPick: (mode: "text" | "voice") => void;
-  onQuickStart: (prompt: string) => void;
-}) {
-  const today = new Date().toLocaleDateString("es-MX", {
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-  });
-  // Capitalize the first letter of the weekday so it reads "Lunes, 18 de mayo".
-  const dateLabel = today.charAt(0).toUpperCase() + today.slice(1);
-
-  return (
-    <div className="relative flex-1 overflow-hidden">
-      {/* Decorative ambient gradient + blurred orb in the corner.
-          Sits behind the content with pointer-events disabled. */}
-      <div
-        className="pointer-events-none absolute inset-0"
-        style={{
-          background:
-            "radial-gradient(circle at 90% -10%, rgba(242,176,86,0.18), transparent 55%), radial-gradient(circle at 0% 100%, rgba(168,168,176,0.18), transparent 50%)",
-        }}
-      />
-      <div className="pointer-events-none absolute -top-16 -right-16 opacity-50 blur-3xl">
-        <AIOrb size={260} />
-      </div>
-
-      <div
-        className="relative h-full flex flex-col items-center justify-center px-6 py-10"
-        style={{ animation: "fadeIn 360ms ease-out" }}
-      >
-        {/* Hero salutation */}
-        <div className="text-center mb-10 md:mb-14 max-w-2xl">
-          <h1 className="text-4xl md:text-5xl font-semibold tracking-tight text-stone-900">
-            Hola, <span className="text-amber-600">{doctorFirstName}</span>
-          </h1>
-          <p className="mt-2 text-sm md:text-base text-stone-500">
-            {dateLabel} · ¿Cómo quieres trabajar hoy?
-          </p>
-        </div>
-
-        {/* Mode cards — tap to enter that mode */}
-        <div className="w-full max-w-3xl grid grid-cols-1 md:grid-cols-2 gap-4">
-          <button
-            onClick={() => onPick("text")}
-            className="group relative overflow-hidden rounded-3xl border border-stone-200 bg-white/80 backdrop-blur-sm p-6 md:p-7 text-left shadow-sm hover:shadow-xl hover:border-amber-300 hover:-translate-y-0.5 active:translate-y-0 transition-all duration-300"
-          >
-            <div
-              className="absolute inset-x-0 -top-px h-px bg-gradient-to-r from-transparent via-amber-300 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"
-              aria-hidden
-            />
-            <div className="flex items-start gap-4">
-              <div className="w-12 h-12 rounded-2xl bg-stone-900 text-amber-300 flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition-transform">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                </svg>
-              </div>
-              <div className="flex-1">
-                <h2 className="text-lg font-semibold text-stone-900">Modo texto</h2>
-                <p className="text-sm text-stone-500 mt-1 leading-snug">
-                  Escribe o dicta los datos del paciente. Ideal para protocolos detallados o cuando estás en silencio.
-                </p>
-              </div>
-            </div>
-            <div className="mt-5 flex items-center text-xs font-medium text-stone-500 group-hover:text-amber-600 transition-colors">
-              Empezar
-              <svg className="ml-1 transition-transform group-hover:translate-x-1" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="5" y1="12" x2="19" y2="12" />
-                <polyline points="12 5 19 12 12 19" />
-              </svg>
-            </div>
-          </button>
-
-          <button
-            onClick={() => onPick("voice")}
-            className="group relative overflow-hidden rounded-3xl border border-stone-200 bg-white/80 backdrop-blur-sm p-6 md:p-7 text-left shadow-sm hover:shadow-xl hover:border-amber-300 hover:-translate-y-0.5 active:translate-y-0 transition-all duration-300"
-          >
-            <div
-              className="absolute inset-x-0 -top-px h-px bg-gradient-to-r from-transparent via-amber-300 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"
-              aria-hidden
-            />
-            <div className="flex items-start gap-4">
-              <div className="w-12 h-12 flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition-transform">
-                <AIOrb size={48} />
-              </div>
-              <div className="flex-1">
-                <h2 className="text-lg font-semibold text-stone-900">Modo voz</h2>
-                <p className="text-sm text-stone-500 mt-1 leading-snug">
-                  Conversa con el agente y deja que él arme el protocolo. Más rápido en consulta.
-                </p>
-              </div>
-            </div>
-            <div className="mt-5 flex items-center text-xs font-medium text-stone-500 group-hover:text-amber-600 transition-colors">
-              Empezar
-              <svg className="ml-1 transition-transform group-hover:translate-x-1" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="5" y1="12" x2="19" y2="12" />
-                <polyline points="12 5 19 12 12 19" />
-              </svg>
-            </div>
-          </button>
-        </div>
-
-        {/* Quick-start chips — discreet, only relevant to text mode but
-            tapping any of them implicitly picks text. */}
-        <div className="mt-10 w-full max-w-3xl">
-          <p className="text-xs uppercase tracking-wider text-stone-400 mb-3 text-center">
-            O empieza con un ejemplo
-          </p>
-          <div className="flex flex-col sm:flex-row gap-2">
-            {QUICK_STARTS.map((q) => (
-              <button
-                key={q}
-                onClick={() => onQuickStart(q)}
-                className="flex-1 text-left text-xs text-stone-600 bg-white/70 backdrop-blur-sm border border-stone-200 hover:border-amber-300 hover:text-stone-800 rounded-xl px-3.5 py-2.5 transition-all"
-              >
-                {q}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// Bucket history items into iOS Mail-style date sections so a long list
-// becomes scannable. Buckets in this order: Hoy → Ayer → Esta semana →
-// {Month Year} for older items, sorted newest-first within each.
-function groupHistoryByDate(items: HistoryItem[]): Array<{
-  label: string;
-  rows: HistoryItem[];
-}> {
-  const now = new Date();
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const startOfYesterday = new Date(startOfToday.getTime() - 86400_000);
-  const startOfWeek = new Date(startOfToday);
-  // Treat Monday as week start (es-MX convention)
-  const dayOffset = (startOfToday.getDay() + 6) % 7;
-  startOfWeek.setDate(startOfToday.getDate() - dayOffset);
-
-  const groups = new Map<string, HistoryItem[]>();
-  const order: string[] = [];
-
-  const push = (label: string, item: HistoryItem) => {
-    if (!groups.has(label)) {
-      groups.set(label, []);
-      order.push(label);
-    }
-    groups.get(label)!.push(item);
-  };
-
-  for (const item of items) {
-    const d = new Date(item.fecha_creacion);
-    if (d >= startOfToday) push("Hoy", item);
-    else if (d >= startOfYesterday) push("Ayer", item);
-    else if (d >= startOfWeek) push("Esta semana", item);
-    else {
-      const monthLabel = d
-        .toLocaleDateString("es-MX", { month: "long", year: "numeric" })
-        .replace(/^./, (c) => c.toUpperCase());
-      push(monthLabel, item);
-    }
-  }
-
-  return order.map((label) => ({ label, rows: groups.get(label)! }));
-}
-
-function patientInitials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "?";
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-}
-
-// Stable amber tint per patient — same color every time their card renders.
-const AVATAR_TINTS = [
-  "bg-amber-500", "bg-rose-500", "bg-emerald-500", "bg-sky-500",
-  "bg-violet-500", "bg-orange-500", "bg-teal-500", "bg-pink-500",
-];
-function avatarTint(name: string): string {
-  let hash = 0;
-  for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) | 0;
-  return AVATAR_TINTS[Math.abs(hash) % AVATAR_TINTS.length];
-}
-
-function MobileHistoryScreen({
-  items,
-  onClose,
-  onPick,
-}: {
-  items: HistoryItem[];
-  onClose: () => void;
-  onPick: (item: HistoryItem) => void;
-}) {
-  const [query, setQuery] = useState("");
-  const filtered = query.trim()
-    ? items.filter((it) =>
-        (it.paciente_nombre + " " + it.descripcion)
-          .toLowerCase()
-          .includes(query.trim().toLowerCase())
-      )
-    : items;
-  const sections = groupHistoryByDate(filtered);
-
-  return (
-    <div
-      className="md:hidden fixed inset-0 z-50 bg-white flex flex-col"
-      style={{ animation: "slideUp 240ms cubic-bezier(0.22, 1, 0.36, 1)" }}
-    >
-      {/* Sticky header */}
-      <header className="flex items-center gap-2 px-2 py-3 border-b border-stone-200 bg-white/95 backdrop-blur-md sticky top-0 z-10">
-        <button
-          onClick={onClose}
-          className="flex items-center gap-1 px-2 py-2 rounded-lg active:bg-stone-100 text-amber-600 font-medium"
-          aria-label="Cerrar"
-        >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-            <polyline points="15 18 9 12 15 6" />
-          </svg>
-          <span className="text-sm">Atrás</span>
-        </button>
-        <h2 className="absolute left-1/2 -translate-x-1/2 text-base font-semibold text-stone-900">
-          Historial
-        </h2>
-        <div className="ml-auto pr-2">
-          {items.length > 0 && (
-            <span className="text-xs bg-stone-100 text-stone-600 px-2 py-0.5 rounded-full font-medium">
-              {items.length}
-            </span>
-          )}
-        </div>
-      </header>
-
-      {/* Search (only if there's enough to search through) */}
-      {items.length > 4 && (
-        <div className="px-4 pt-3 pb-2 border-b border-stone-100 bg-white">
-          <div className="relative">
-            <svg
-              className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400"
-              width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-            >
-              <circle cx="11" cy="11" r="8" />
-              <line x1="21" y1="21" x2="16.65" y2="16.65" />
-            </svg>
-            <input
-              type="search"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Buscar paciente…"
-              className="w-full pl-9 pr-3 py-2.5 text-sm bg-stone-100 border border-transparent rounded-xl focus:bg-white focus:border-amber-300 focus:outline-none transition-all"
-            />
-          </div>
-        </div>
-      )}
-
-      {/* Body */}
-      <div className="flex-1 overflow-y-auto pb-6">
-        {items.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full px-8 text-center gap-3">
-            <div className="w-16 h-16 rounded-2xl bg-stone-100 flex items-center justify-center">
-              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#a8a29e" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" />
-              </svg>
-            </div>
-            <p className="text-sm text-stone-600 font-medium">Aún no hay protocolos guardados</p>
-            <p className="text-xs text-stone-400 max-w-xs">
-              Los protocolos que guardes aparecerán aquí ordenados por fecha.
-            </p>
-          </div>
-        ) : filtered.length === 0 ? (
-          <div className="text-center text-sm text-stone-500 mt-12 px-6">
-            No hay resultados para <strong>{query}</strong>.
-          </div>
-        ) : (
-          sections.map((section) => (
-            <section key={section.label}>
-              <div className="px-4 pt-5 pb-1.5 text-[11px] uppercase tracking-wider text-stone-400 font-semibold">
-                {section.label}
-              </div>
-              <ul className="bg-white">
-                {section.rows.map((item, idx) => (
-                  <li key={item.id}>
-                    <button
-                      type="button"
-                      onClick={() => onPick(item)}
-                      className="w-full text-left px-4 py-3 flex items-center gap-3 active:bg-stone-100 transition-colors"
-                    >
-                      <div
-                        className={`w-11 h-11 rounded-full flex items-center justify-center text-white font-semibold text-sm flex-shrink-0 ${avatarTint(item.paciente_nombre)}`}
-                      >
-                        {patientInitials(item.paciente_nombre)}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-baseline gap-2">
-                          <div className="text-sm font-semibold text-stone-900 truncate">
-                            {item.paciente_nombre}
-                          </div>
-                          <div className="ml-auto text-[11px] text-stone-400 flex-shrink-0">
-                            {new Date(item.fecha_creacion).toLocaleDateString("es-MX", {
-                              day: "numeric", month: "short",
-                            })}
-                          </div>
-                        </div>
-                        <div className="text-xs text-stone-500 truncate mt-0.5">
-                          {item.descripcion}
-                        </div>
-                      </div>
-                      <svg className="text-stone-300 flex-shrink-0" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-                        <polyline points="9 18 15 12 9 6" />
-                      </svg>
-                    </button>
-                    {idx < section.rows.length - 1 && (
-                      <div className="ml-[4.25rem] h-px bg-stone-100" />
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </section>
-          ))
-        )}
-      </div>
-    </div>
-  );
-}
-
-function ThinkingIndicator({ phase }: { phase: "thinking" | "protocol" }) {
-  const [labelIdx, setLabelIdx] = useState(0);
-  const [labelVisible, setLabelVisible] = useState(true);
-  const labels = THINKING_LABELS[phase];
-
-  // Cycle the label every ~3s with a quick fade between swaps so the user
-  // sees the chat is doing real work even before any text streams.
-  useEffect(() => {
-    setLabelIdx(0);
-    setLabelVisible(true);
-    let cancelled = false;
-    const interval = setInterval(() => {
-      if (cancelled) return;
-      setLabelVisible(false);
-      setTimeout(() => {
-        if (cancelled) return;
-        setLabelIdx((i) => (i + 1) % labels.length);
-        setLabelVisible(true);
-      }, 220);
-    }, 3000);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, [phase, labels.length]);
-
-  return (
-    <div className="flex items-center gap-2.5 py-0.5">
-      <div className="flex-shrink-0">
-        <AIOrb size={28} />
-      </div>
-      <span
-        className="text-sm text-stone-600 transition-opacity duration-200"
-        style={{ opacity: labelVisible ? 1 : 0 }}
-      >
-        {labels[labelIdx]}
-      </span>
-    </div>
-  );
-}
 
 export default function ChatPage({ user, history: initialHistory }: Props) {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -533,7 +136,29 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
   // IDs de protocolos ya vistos por el usuario. Persistido en localStorage.
   // El badge del nav móvil cuenta cuántos protocolos hay en `history` cuyo
   // id NO está aquí — i.e., creados pero no vistos todavía.
-  const [seenIds, setSeenIds] = useState<Set<string>>(new Set());
+  // Lazy initializer: corre UNA VEZ en el primer render (no en cada uno).
+  // Antes lo hacíamos en un useEffect — eso disparaba un re-render extra y
+  // generaba el warning react-hooks/set-state-in-effect. Hacerlo aquí es
+  // SSR-safe porque chequeamos typeof window.
+  const [seenIds, setSeenIds] = useState<Set<string>>(() => {
+    if (typeof window === "undefined") return new Set();
+    try {
+      const stored = window.localStorage.getItem("p4a:seenProtocolIds");
+      if (stored) return new Set(JSON.parse(stored) as string[]);
+      // Primera vez en este dispositivo: baseline = todo el history actual.
+      const baseline = new Set(initialHistory.map((i) => i.id));
+      try {
+        window.localStorage.setItem(
+          "p4a:seenProtocolIds",
+          JSON.stringify([...baseline])
+        );
+      } catch {}
+      return baseline;
+    } catch (err) {
+      console.warn("[history] seenIds init failed:", err);
+      return new Set();
+    }
+  });
   // Cuando hacemos un swap de vista (landing → mode, history → conversación)
   // bajamos la opacidad un instante para que el cambio se sienta como un
   // cross-fade en vez de un salto brusco. Lo levantamos en el próximo frame.
@@ -598,35 +223,30 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  // Scroll-to-bottom estrategia:
+  //   - cuando aparece un mensaje NUEVO (cambio en messages.length) → smooth
+  //     scroll para que el usuario sienta el movimiento.
+  //   - mientras el último mensaje crece carácter-a-carácter (streaming) →
+  //     auto-scroll throttled cada 120ms con behavior:"auto" (instantáneo).
+  //     "smooth" en cada token reinicia la animación y causa jank brutal en
+  //     iOS (visible como vibración del scroll).
+  const lastMessagesLenRef = useRef(0);
+  const lastScrollTsRef = useRef(0);
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
-
-  // Inicializa seenIds desde localStorage. Si es la primera vez que abrimos
-  // la app, marcamos como vistos TODOS los protocolos existentes para que el
-  // badge nazca en 0 — solo los protocolos creados después de este momento
-  // cuentan como "nuevos".
-  useEffect(() => {
-    try {
-      const stored = typeof window !== "undefined"
-        ? window.localStorage.getItem("p4a:seenProtocolIds")
-        : null;
-      if (stored) {
-        setSeenIds(new Set(JSON.parse(stored) as string[]));
-      } else {
-        const baseline = new Set(initialHistory.map((i) => i.id));
-        setSeenIds(baseline);
-        window.localStorage.setItem(
-          "p4a:seenProtocolIds",
-          JSON.stringify([...baseline])
-        );
-      }
-    } catch (err) {
-      console.warn("[history] seenIds init failed:", err);
+    const isNewMessage = messages.length !== lastMessagesLenRef.current;
+    lastMessagesLenRef.current = messages.length;
+    if (isNewMessage) {
+      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+      lastScrollTsRef.current = Date.now();
+      return;
     }
-    // Intencional: solo en el primer mount.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    // Streaming growth: throttle a 120ms y scroll instantáneo.
+    const now = Date.now();
+    if (now - lastScrollTsRef.current >= 120) {
+      bottomRef.current?.scrollIntoView({ behavior: "auto" });
+      lastScrollTsRef.current = now;
+    }
+  }, [messages]);
 
   // runViewTransition: baja la opacidad de la vista, espera el fade-out,
   // aplica el cambio de estado, y luego vuelve a opacidad 1. Da la sensación
@@ -668,21 +288,82 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
     0
   );
 
-  // Reset del badge cuando el doctor abre el listado:
-  //   - móvil: al abrir el sheet "historial"
-  //   - desktop: cuando el sidebar está expandido (siempre lo está por
-  //     defecto, así que esto cubre la mayoría de los flujos)
-  useEffect(() => {
-    if (mobileSheet === "history") {
-      markSeen(history.map((it) => it.id));
-    }
-  }, [mobileSheet, history, markSeen]);
+  // Helper para marcar TODO el history actual como visto. Se llama desde
+  // los event handlers (tap en "Historial", post-save, etc.) — NO desde
+  // useEffect porque eso dispara cascading renders.
+  const markAllHistorySeen = useCallback(() => {
+    markSeen(history.map((it) => it.id));
+  }, [history, markSeen]);
 
-  useEffect(() => {
-    if (sidebarOpen) {
-      markSeen(history.map((it) => it.id));
+  // Detección barata de "esto es un móvil" — usamos viewport width porque
+  // iOS Safari miente con userAgent y `matchMedia('(pointer:coarse)')` no
+  // es 100% confiable en simuladores. 768px coincide con el breakpoint
+  // md: de Tailwind y es donde aparece el bottom-nav.
+  const isMobileViewport = () =>
+    typeof window !== "undefined" && window.innerWidth < 768;
+
+  // Declarado ANTES de handleSend porque handleSend lo llama. JS hoisting no
+  // aplica a useCallback (vs function declaration), así que el orden léxico
+  // importa — el lint react-hooks/set-state-in-effect lo rechazaba antes.
+  const openPreview = useCallback(async (protocol: ProtocoloData) => {
+    // En móvil, el iframe-modal tiene problemas conocidos con pinch-zoom
+    // (iOS Safari ignora el viewport meta dentro de iframes), así que
+    // abrimos el HTML como pestaña nativa de Safari donde el zoom funciona.
+    // En desktop seguimos con el modal.
+    if (isMobileViewport()) {
+      // Abrir la pestaña INMEDIATAMENTE — si la abrimos después del await
+      // Safari la bloquea como popup (solo permite window.open dentro del
+      // gesture-handler de un click).
+      const tab = window.open("", "_blank");
+      if (tab) {
+        tab.document.write(
+          '<!doctype html><html><body style="margin:0;font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;color:#888"><p>Cargando vista previa…</p></body></html>'
+        );
+      }
+      try {
+        const res = await fetch("/api/preview", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ protocolData: protocol }),
+        });
+        if (!res.ok) throw new Error("preview failed");
+        const html = await res.text();
+        if (tab) {
+          const htmlWithClose = injectMobilePreviewCloseButton(html);
+          tab.document.open();
+          tab.document.write(htmlWithClose);
+          tab.document.close();
+        }
+      } catch (err) {
+        console.error(err);
+        if (tab) {
+          tab.document.body.innerHTML =
+            "<p style='padding:2rem;font-family:sans-serif'>No se pudo cargar la vista previa.</p>";
+        }
+      }
+      return;
     }
-  }, [sidebarOpen, history, markSeen]);
+
+    // Desktop: modal con iframe (zoom no es problema en monitor)
+    setPreviewOpen(true);
+    setPreviewLoading(true);
+    setPreviewHTML("");
+    try {
+      const res = await fetch("/api/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ protocolData: protocol }),
+      });
+      if (!res.ok) throw new Error("preview failed");
+      const html = await res.text();
+      setPreviewHTML(html);
+    } catch (err) {
+      console.error(err);
+      setPreviewHTML("<p style='padding:2rem;font-family:sans-serif'>No se pudo cargar la vista previa.</p>");
+    } finally {
+      setPreviewLoading(false);
+    }
+  }, []);
 
   const handleSend = useCallback(async () => {
     const text = input.trim();
@@ -759,73 +440,6 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSend();
-    }
-  };
-
-  // Detección barata de "esto es un móvil" — usamos viewport width porque
-  // iOS Safari miente con userAgent y `matchMedia('(pointer:coarse)')` no
-  // es 100% confiable en simuladores. 768px coincide con el breakpoint
-  // md: de Tailwind y es donde aparece el bottom-nav.
-  const isMobileViewport = () =>
-    typeof window !== "undefined" && window.innerWidth < 768;
-
-  const openPreview = async (protocol: ProtocoloData) => {
-    // En móvil, el iframe-modal tiene problemas conocidos con pinch-zoom
-    // (iOS Safari ignora el viewport meta dentro de iframes), así que
-    // abrimos el HTML como pestaña nativa de Safari donde el zoom funciona.
-    // En desktop seguimos con el modal.
-    if (isMobileViewport()) {
-      // Abrir la pestaña INMEDIATAMENTE — si la abrimos después del await
-      // Safari la bloquea como popup (solo permite window.open dentro del
-      // gesture-handler de un click).
-      const tab = window.open("", "_blank");
-      if (tab) {
-        tab.document.write(
-          '<!doctype html><html><body style="margin:0;font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;color:#888"><p>Cargando vista previa…</p></body></html>'
-        );
-      }
-      try {
-        const res = await fetch("/api/preview", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ protocolData: protocol }),
-        });
-        if (!res.ok) throw new Error("preview failed");
-        const html = await res.text();
-        if (tab) {
-          const htmlWithClose = injectMobilePreviewCloseButton(html);
-          tab.document.open();
-          tab.document.write(htmlWithClose);
-          tab.document.close();
-        }
-      } catch (err) {
-        console.error(err);
-        if (tab) {
-          tab.document.body.innerHTML =
-            "<p style='padding:2rem;font-family:sans-serif'>No se pudo cargar la vista previa.</p>";
-        }
-      }
-      return;
-    }
-
-    // Desktop: modal con iframe (zoom no es problema en monitor)
-    setPreviewOpen(true);
-    setPreviewLoading(true);
-    setPreviewHTML("");
-    try {
-      const res = await fetch("/api/preview", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ protocolData: protocol }),
-      });
-      if (!res.ok) throw new Error("preview failed");
-      const html = await res.text();
-      setPreviewHTML(html);
-    } catch (err) {
-      console.error(err);
-      setPreviewHTML("<p style='padding:2rem;font-family:sans-serif'>No se pudo cargar la vista previa.</p>");
-    } finally {
-      setPreviewLoading(false);
     }
   };
 
@@ -908,6 +522,10 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
         if (histRes.ok) {
           const { items } = (await histRes.json()) as { items: HistoryItem[] };
           setHistory(items);
+          // El doctor ACABA de crear este protocolo — obviamente ya lo
+          // conoce. Lo marcamos visto inmediatamente para no inflar el
+          // badge con su propio trabajo.
+          markSeen(items.map((it) => it.id));
         }
       }
     } catch (err) {
@@ -1716,7 +1334,10 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
             <span className="text-[10px] font-medium text-stone-600">Nuevo</span>
           </button>
           <button
-            onClick={() => setMobileSheet("history")}
+            onClick={() => {
+              setMobileSheet("history");
+              markAllHistorySeen();
+            }}
             className="flex flex-col items-center gap-0.5 px-4 py-1.5 rounded-lg active:bg-stone-100 transition-colors relative"
           >
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#504d4d" strokeWidth="2">

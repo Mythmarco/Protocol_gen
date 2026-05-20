@@ -69,9 +69,53 @@ export default function RootLayout({
             generate <link rel="icon"> and <link rel="apple-touch-icon">
             automatically — no need to hand-write them here. */}
         <meta name="mobile-web-app-capable" content="yes" />
+        {/* iOS PWA splash. Sin esto, el doctor ve blanco ~1-2s al abrir
+            la PWA instalada. Con uno solo 1024 iOS lo estira al device.
+            Si más adelante queremos splashes per-resolución, agregamos
+            multiple <link> con media="(device-width: ...)". */}
+        <link rel="apple-touch-startup-image" href="/splash.png" />
         <script
           dangerouslySetInnerHTML={{
-            __html: `if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');`,
+            // SW lifecycle hardening:
+            //  - registramos al cargar
+            //  - llamamos .update() periódicamente (cada 60 min) por si la app
+            //    queda abierta en background y el usuario no recarga
+            //  - cuando hay un SW NUEVO esperando (updatefound), le mandamos
+            //    skipWaiting via postMessage para que tome control sin
+            //    forzar al usuario a cerrar la pestaña. Combinado con el
+            //    skipWaiting en sw.js install handler, esto resuelve el
+            //    "deployé pero el usuario sigue viendo lo viejo".
+            __html: `
+              if ('serviceWorker' in navigator) {
+                window.addEventListener('load', function() {
+                  navigator.serviceWorker.register('/sw.js')
+                    .then(function(reg) {
+                      // Check for updates each hour in long sessions.
+                      setInterval(function() { reg.update().catch(function(){}); }, 3600000);
+                      // When a new worker is found and gets installed, ask it
+                      // to skipWaiting so it activates on the next reload.
+                      reg.addEventListener('updatefound', function() {
+                        var nw = reg.installing;
+                        if (!nw) return;
+                        nw.addEventListener('statechange', function() {
+                          if (nw.state === 'installed' && navigator.serviceWorker.controller) {
+                            try { nw.postMessage({ type: 'SKIP_WAITING' }); } catch(e) {}
+                          }
+                        });
+                      });
+                    })
+                    .catch(function(err) { console.warn('SW register failed:', err); });
+                  // When the active controller changes (new SW took over),
+                  // do ONE silent reload so the user sees the new bundle.
+                  var refreshed = false;
+                  navigator.serviceWorker.addEventListener('controllerchange', function() {
+                    if (refreshed) return;
+                    refreshed = true;
+                    window.location.reload();
+                  });
+                });
+              }
+            `,
           }}
         />
       </head>

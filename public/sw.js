@@ -6,8 +6,17 @@
 // Bump el `CACHE_VERSION` cada vez que cambie esta lógica de SW para forzar
 // activate + limpieza de caches viejos en todos los clientes.
 
-const CACHE_VERSION = "p4a-v3";
+const CACHE_VERSION = "p4a-v4";
 const OFFLINE_SHELL = "/login";
+
+// Permite que la página le diga al SW recién instalado "tómate control ya"
+// sin esperar a que se cierren todas las pestañas. Layout.tsx envía
+// { type: 'SKIP_WAITING' } cuando detecta un updatefound + installed.
+self.addEventListener("message", (event) => {
+  if (event.data && event.data.type === "SKIP_WAITING") {
+    self.skipWaiting();
+  }
+});
 
 self.addEventListener("install", (event) => {
   event.waitUntil(

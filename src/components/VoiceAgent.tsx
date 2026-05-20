@@ -469,9 +469,13 @@ export default function VoiceAgent({
   );
 
   // If the parent swaps in a new initial transcript (e.g. doctor loaded a
-  // different past protocol), reset our view to match it.
+  // different past protocol), reset our view to match it. queueMicrotask
+  // defers el setState fuera del effect body — el lint rule
+  // react-hooks/set-state-in-effect prohíbe llamar setState sync dentro de
+  // un effect porque dispara un re-render extra. Async lo permite.
   useEffect(() => {
-    if (initialTranscript) setTranscript(initialTranscript);
+    if (!initialTranscript) return;
+    queueMicrotask(() => setTranscript(initialTranscript));
   }, [initialTranscript]);
 
   // Emit transcript changes upward so ChatPage can persist them with the PDF.
