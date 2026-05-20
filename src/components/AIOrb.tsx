@@ -1,12 +1,18 @@
 "use client";
 
-// Morphing AI orb. Layered shapes:
+// Morphing AI orb — CSS-only, ligero (~0 KB JS overhead).
+//
+// Sirve para usos DECORATIVOS / "vibe checks" del estado idle: landing
+// hero, loading overlays, thinking indicator dentro del chat. No es
+// audio-reactivo — para eso ver OrbVoice.tsx (R3F + shader, lazy-loaded).
+//
+// Layers:
 //   1. Soft halo (blurred conic gradient) — pulses opacity + scale
 //   2. Morphing blob (border-radius keyframes) — slowly rotating gradient
 //   3. Inner highlight — secondary pulse for depth
 //
-// Designed for the Peptides4ALL palette (ámbar + coral on light background).
-// Drop it anywhere — the parent decides the size via `className`.
+// Las animaciones (blobGlow, blobRotate, blobMorph, blobInner) están en
+// globals.css.
 
 interface Props {
   size?: number; // pixel size of the outer container

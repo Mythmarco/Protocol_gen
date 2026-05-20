@@ -3,8 +3,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { RealtimeAgent, RealtimeSession, tool } from "@openai/agents/realtime";
 import type { ProtocoloData } from "@/lib/protocol-types";
-import AIOrb from "./AIOrb";
-import Waveform from "./Waveform";
+import dynamic from "next/dynamic";
+import { useVoiceLevels } from "@/hooks/useVoiceLevels";
+import type { OrbState } from "./OrbVoice";
+
+// Lazy-load three.js (~180KB) solo cuando el doctor entra a modo voz.
+// ssr:false porque WebGL no es SSR-safe. Esto saca three del bundle de
+// login y modo texto, manteniendo el initial paint rápido.
+const OrbVoice = dynamic(() => import("./OrbVoice"), {
+  ssr: false,
+  loading: () => <div style={{ width: 200, height: 200 }} />,
+});
 
 type Status = "idle" | "connecting" | "listening" | "speaking" | "thinking" | "error";
 
@@ -491,8 +500,25 @@ export default function VoiceAgent({
   const transcriptBottomRef = useRef<HTMLDivElement | null>(null);
   // Amplitude of the AI's audio output (0-1 RMS of PCM chunks).
   // Updated each time the SDK fires an "audio" event during AI speech.
-  // The Waveform reads this via ref each frame to drive the bars.
+  // El orb shader lee este ref via useVoiceLevels.
   const aiAmpRef = useRef(0);
+
+  // Hook unificado: mic input + AI output amplitudes para el orb shader.
+  // Activo solo cuando el doctor está en sesión activa (listening/speaking)
+  // — en idle/error no abrimos el mic, en thinking el orb usa fake-amp
+  // decorativa (no necesita audio).
+  const orbActive = status === "listening" || status === "speaking";
+  const { inputLevelRef, outputLevelRef } = useVoiceLevels({
+    active: orbActive,
+    speaking: status === "speaking",
+    externalAmpRef: aiAmpRef,
+  });
+  // Mapea status del agent al estado del orb (paleta de colores).
+  const orbState: OrbState =
+    status === "listening" ? "listening"
+    : status === "speaking" ? "speaking"
+    : status === "thinking" ? "thinking"
+    : "idle";
   // Once the handoff tool returns, we start a single timer that closes the
   // session after the agent has had a few seconds to say its final "Listo"
   // line. Using a timer (not an event) prevents the loop where the agent
@@ -722,82 +748,56 @@ export default function VoiceAgent({
 
   return (
     <div className="flex flex-col items-center justify-center flex-1 px-4 py-8 gap-6">
-      {/* Stage — orb and mic button share the same spot, crossfade between them */}
-      <div className="relative w-40 h-40 md:w-48 md:h-48 flex items-center justify-center">
-        {/* AI orb layer (shown during thinking) */}
-        <div
-          className="absolute inset-0 flex items-center justify-center"
-          style={{
-            opacity: isThinking ? 1 : 0,
-            transform: `scale(${isThinking ? 1 : 0.92})`,
-            transition: "opacity 500ms cubic-bezier(0.22, 1, 0.36, 1), transform 500ms cubic-bezier(0.22, 1, 0.36, 1)",
-            pointerEvents: isThinking ? "auto" : "none",
-          }}
-        >
-          <AIOrb size={typeof window !== "undefined" && window.innerWidth < 640 ? 140 : 180} />
-        </div>
+      {/* Stage — orb arriba (visualizador audio-reactivo) + mic button abajo
+          (toggle de sesión). Mismo orb para todos los estados; el shader
+          cambia color por orbState. Reemplaza el AIOrb+Waveform separados. */}
+      <div className="flex flex-col items-center gap-5">
+        <OrbVoice
+          size={typeof window !== "undefined" && window.innerWidth < 640 ? 200 : 240}
+          state={orbState}
+          inputLevelRef={inputLevelRef}
+          outputLevelRef={outputLevelRef}
+        />
 
-        {/* Mic button layer (everything else) */}
+        {/* Mic button — toggle start/stop. Pequeño abajo del orb para que el
+            orb sea claramente el centro de atención. */}
         <button
           onClick={isActive ? stopVoice : startVoice}
           disabled={status === "connecting" || isThinking}
-          style={{
-            opacity: isThinking ? 0 : 1,
-            transform: `scale(${isThinking ? 0.92 : 1})`,
-            transition: "opacity 500ms cubic-bezier(0.22, 1, 0.36, 1), transform 500ms cubic-bezier(0.22, 1, 0.36, 1)",
-          }}
-          className={`relative w-32 h-32 md:w-40 md:h-40 rounded-full flex items-center justify-center shadow-xl border
+          className={`relative w-20 h-20 rounded-full flex items-center justify-center shadow-lg border transition-all duration-200
           ${
-            // While the colorful waveform is showing, use a silver-white gradient
-            // background so the rainbow bars pop instead of fighting amber.
             status === "listening" || status === "speaking"
-              ? "bg-gradient-to-br from-white via-stone-50 to-stone-200 border-stone-200 hover:from-stone-50"
+              ? "bg-white border-stone-200 hover:bg-stone-50 active:scale-95"
               : status === "connecting"
               ? "bg-stone-300 cursor-wait border-stone-300"
               : status === "error"
-              ? "bg-red-500 hover:bg-red-400 border-red-600"
-              : "bg-stone-800 hover:bg-stone-700 border-stone-900"
+              ? "bg-red-500 hover:bg-red-400 border-red-600 active:scale-95"
+              : isThinking
+              ? "bg-stone-100 border-stone-200 cursor-wait"
+              : "bg-stone-900 hover:bg-stone-800 border-stone-900 active:scale-95"
           }`}
-        title={isActive ? "Detener" : "Iniciar sesión de voz"}
-      >
-        {status === "listening" && (
-          // Subtle silver ring — the colored bars carry the action
-          <span className="absolute inset-0 rounded-full bg-stone-200 opacity-50 animate-ping" />
-        )}
-        {status === "speaking" && (
-          // Slightly stronger silver pulse while AI talks
-          <span className="absolute inset-0 rounded-full bg-stone-300 opacity-40 animate-pulse" />
-        )}
-        {status === "connecting" && (
-          <svg className="absolute inset-0 m-auto animate-spin text-stone-500" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-            <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
-          </svg>
-        )}
-
-        {!isActive ? (
-          // Idle: microphone icon
-          <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="relative z-10">
-            <path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
-            <path d="M19 10v1a7 7 0 0 1-14 0v-1"/>
-            <line x1="12" y1="18" x2="12" y2="22"/>
-            <line x1="8" y1="22" x2="16" y2="22"/>
-          </svg>
-        ) : status === "listening" || status === "speaking" ? (
-          // Audio-reactive waveform — mic for listening, AI PCM amplitude for speaking
-          <div className="relative z-10">
-            <Waveform
-              active={true}
-              speaking={status === "speaking"}
-              externalAmpRef={aiAmpRef}
-              size="lg"
-            />
-          </div>
-        ) : status !== "connecting" ? (
-          // Fallback (shouldn't hit): stop icon
-          <svg width="40" height="40" viewBox="0 0 24 24" fill="white" className="relative z-10">
-            <rect x="6" y="6" width="12" height="12" rx="2"/>
-          </svg>
-        ) : null}
+          title={isActive ? "Detener" : "Iniciar sesión de voz"}
+          aria-label={isActive ? "Detener sesión de voz" : "Iniciar sesión de voz"}
+        >
+          {status === "connecting" && (
+            <svg className="animate-spin text-stone-500" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+            </svg>
+          )}
+          {/* isActive incluye "connecting"; "!isActive" implica idle/thinking/error */}
+          {!isActive && (
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z" />
+              <path d="M19 10v1a7 7 0 0 1-14 0v-1" />
+              <line x1="12" y1="18" x2="12" y2="22" />
+              <line x1="8" y1="22" x2="16" y2="22" />
+            </svg>
+          )}
+          {(status === "listening" || status === "speaking") && (
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" className="text-stone-700">
+              <rect x="6" y="6" width="12" height="12" rx="2" />
+            </svg>
+          )}
         </button>
       </div>
 
