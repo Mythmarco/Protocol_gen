@@ -67,6 +67,8 @@ Lo que viene en \`gathered\` ES lo que el doctor dictó. NUNCA lo "optimices" o 
 - metadata.idioma = gathered.metadata.idioma
 - cotizacion.moneda = gathered.cotizacion.moneda
 - explicacion_stack: 1–2 párrafos de SINERGIA entre los péptidos elegidos. NO descripciones individuales recicladas del catálogo.
+- peptidos[i].ciclo: usa LO QUE EL DOCTOR DICTÓ ("Mes 1", "8 semanas", "Ciclo de mantenimiento"). Si no dictó nada, usa "Mes {gathered.mes_actual} de {gathered.duracion_meses}". **JAMÁS escribas "Día 1, 3, 5…" en ciclo** — eso ya está en el calendario semanal y es ruido visual.
+- indicaciones_generales[0]: SIEMPRE empieza con una línea que diga la duración + revisión, usando duracion_meses/mes_actual. Ej: "Protocolo de 1 mes. Revisión clínica al cierre del mes 1." o "Protocolo de 3 meses — actualmente en mes 2. Revisión al cierre de cada mes."
 
 # cotizacion.nota
 Por DEFAULT déjalo como string vacío: "".

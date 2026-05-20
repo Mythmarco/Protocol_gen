@@ -250,9 +250,16 @@ export function buildProtocolHTML(data: ProtocoloData, options: BuildOptions = {
   <style>
     :root{--brand-dark:#504d4d;--brand-gold:#f2b056;--brand-gold-deep:#d9943f;--brand-gold-light:#f8d9a0;--brand-silver:#b2b0ae;--brand-warm-gray:#d7d5d3;--brand-off-white:#f8f7f6;--ink:#2f2d2d;--muted:#6b6868;--ok:#0f766e;--warning:#9a3412}
     *{box-sizing:border-box}
-    html,body{margin:0;padding:0;color:var(--ink);background:radial-gradient(circle at 100% 0%,rgba(242,176,86,.08),transparent 38%),#f5f3f1;font-family:"DM Sans","Plus Jakarta Sans","Segoe UI",sans-serif;line-height:1.4}
+    html,body{margin:0;padding:0;color:var(--ink);background:#f5f3f1;font-family:"DM Sans","Plus Jakarta Sans","Segoe UI",sans-serif;line-height:1.4}
     .page{width:210mm;min-height:297mm;margin:16px auto;padding:18mm 16mm 16mm;background:#fff;box-shadow:0 22px 50px rgba(34,30,28,.12);position:relative;overflow:hidden}
-    .page::before{content:"";position:absolute;inset:0;pointer-events:none;background:radial-gradient(circle at 0% 0%,rgba(242,176,86,.12),transparent 35%),linear-gradient(140deg,rgba(255,255,255,0),rgba(242,176,86,.04));z-index:0}
+    /* Decoración solo en pantalla. En PDF estos gradientes radiales se
+       convertían en objetos vectoriales pesados que hacían el scroll
+       extremadamente lento en el visor de Chrome (cada repaint
+       rasterizaba el gradiente entero). En PDF el fondo blanco basta. */
+    @media screen{
+      html,body{background:radial-gradient(circle at 100% 0%,rgba(242,176,86,.08),transparent 38%),#f5f3f1}
+      .page::before{content:"";position:absolute;inset:0;pointer-events:none;background:radial-gradient(circle at 0% 0%,rgba(242,176,86,.12),transparent 35%),linear-gradient(140deg,rgba(255,255,255,0),rgba(242,176,86,.04));z-index:0}
+    }
     .content{position:relative;z-index:1}
     .header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding-bottom:12px;border-bottom:2px solid var(--brand-warm-gray)}
     .brand-row{display:flex;align-items:center;gap:10px}
@@ -306,10 +313,13 @@ export function buildProtocolHTML(data: ProtocoloData, options: BuildOptions = {
     .quote-table td:nth-child(2){text-align:center;width:76px}
     .quote-table td:nth-child(3),.quote-table td:nth-child(4){text-align:right;width:188px}
     .quote-meta-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
-    .quote-summary{width:440px;margin-left:auto;border:1px solid #dfdddb;border-radius:10px;overflow:hidden;background:#fff}
-    .quote-summary-row{display:grid;grid-template-columns:1fr 170px;min-height:40px;border-bottom:1px solid #dfdddb;font-size:13px;color:var(--brand-dark);font-weight:600}
-    .quote-summary-row:last-child{border-bottom:0;background:#f8efe2;font-weight:800;font-size:22px}
-    .quote-summary-row>div{display:flex;align-items:center;justify-content:flex-end;padding:0 10px;background:#fff}
+    .quote-summary{width:460px;margin-left:auto;border:1px solid #dfdddb;border-radius:10px;overflow:hidden;background:#fff}
+    /* Label angosto (160px) + valor amplio (resto) en flex para que el monto
+       siempre quepa en una línea. nowrap como red de seguridad por si el
+       texto pasa el ancho (Intl produce "MX$ 1,234,567.89" tipo). */
+    .quote-summary-row{display:grid;grid-template-columns:160px 1fr;min-height:40px;border-bottom:1px solid #dfdddb;font-size:13px;color:var(--brand-dark);font-weight:600}
+    .quote-summary-row:last-child{border-bottom:0;background:#f8efe2;font-weight:800;font-size:22px;min-height:56px}
+    .quote-summary-row>div{display:flex;align-items:center;justify-content:flex-end;padding:0 12px;background:#fff;white-space:nowrap}
     .quote-summary-row:last-child>div{background:#f8efe2}
     .quote-summary-row>div:last-child{border-left:1px solid #dfdddb;justify-content:flex-end;font-weight:700}
     .quote-summary-row.discount>div:last-child{color:var(--warning)}

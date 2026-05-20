@@ -125,11 +125,21 @@ Devuelve protocolos pasados con todos sus datos (péptidos, dosis, calendario, c
   - Ejemplo (no cabe, doctor dictó): Doctor dice "Retatrutide 4 mg de vial 15 mg, 50 unidades". El cálculo daría 53 u (no cabe), pero el DOCTOR ya decidió 50 u. Úsalo: \`unidades_jeringa: "50"\`. No agregues nota — fue decisión consciente.
 - Vía subcutánea para todos los péptidos salvo indicación explícita
 
+## Campo \`ciclo\` por péptido (importante para legibilidad del PDF)
+El campo \`ciclo\` debe describir el **bloque temporal del tratamiento**, NO una lista de días. Preferencia (en este orden):
+1. **Lo que el doctor dictó textualmente** ("Mes 1", "8 semanas", "Ciclo de 4 semanas", "Maintenance phase", "Carga + sostén").
+2. Si el doctor solo dio \`duracion_meses\` sin etiqueta: usa **"Mes 1"**, **"Mes 2"**, etc. según \`mes_actual\` y \`duracion_meses\`. Ej: si \`duracion_meses = 3\` y \`mes_actual = 1\` → \`ciclo: "Mes 1 de 3"\`.
+3. NUNCA escribas "Día 1, 3, 5, 8…" en \`ciclo\`. Esa información YA está en \`calendario\` (la tabla semanal). Repetirla es ruido visual.
+
 ## Formato del calendario semanal
 - Llaves: nombres en español (\`Lunes\`, \`Martes\`, ...) **sin importar el idioma del protocolo** — el template los traduce al renderizar.
 - Valores: dosis en unidades (p.ej. \`"50 u"\`, \`"10 u"\`, \`"5 u noche"\`) o \`"—"\` para días sin aplicación.
 
 ## Indicaciones generales (incluye siempre, adaptadas al idioma)
+- **PRIMERA línea SIEMPRE**: una etiqueta clara de duración + revisión, usando \`duracion_meses\` y \`mes_actual\`. Ejemplos:
+  - 1 mes total: "Protocolo de 1 mes. Revisión clínica al cierre del mes 1 antes de continuar."
+  - 3 meses, mes 1: "Protocolo de 3 meses — actualmente en mes 1. Revisión al cierre de cada mes para ajustes."
+  - Maintenance: si el doctor lo dictó así, parafrasea ("Protocolo de mantenimiento, revisión cada 3 meses").
 - Registrar peso, apetito, saciedad, digestión, energía, sueño y efectos percibidos
 - Rotar sitios de aplicación subcutánea (abdomen, muslo, brazo posterior)
 - Material estéril; no reutilizar agujas
