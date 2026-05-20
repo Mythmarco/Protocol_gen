@@ -146,35 +146,45 @@ export async function executePriceTool(input: { product_name: string }) {
         `searchableCols=${JSON.stringify(searchableCols)}`
     );
 
-    const isPriceCol = (h: string) => norm(h).includes("precio");
+    // Columnas que el modelo realmente necesita ver. otros_datos (todo el
+     // resto de columnas del sheet) inflaba el contexto con strings que el
+     // modelo nunca usaba para cotizar.
+    const concentracionCol = headers.find((h) => norm(h) === "concentracion");
+    const skuCol = headers.find((h) => norm(h) === "sku");
 
     // Split into tokens, stem each (handles ES↔EN: "retatrutide" ↔ "retatrutida").
     // Match if every stemmed token appears in the stemmed haystack.
     const tokens = norm(input.product_name).split(/\s+/).filter(Boolean).map(stem);
+    // ¿La query incluye concentración? Heurística: token con dígito + (mg|ui).
+    const hasConcentration = tokens.some((t) => /\d.*(mg|ui|iu)\b/i.test(t));
 
-    const matches = rows
-      .filter((r) => {
-        const haystack = stemPhrase(norm(searchableCols.map((c) => r[c] ?? "").join(" ")));
-        return tokens.every((t) => haystack.includes(t));
-      })
-      .map((r) => ({
-        producto: [r[nameCol], r[headers.find((h) => norm(h) === "concentracion") ?? ""]]
+    const allMatches = rows.filter((r) => {
+      const haystack = stemPhrase(
+        norm(searchableCols.map((c) => r[c] ?? "").join(" "))
+      );
+      return tokens.every((t) => haystack.includes(t));
+    });
+
+    // Cuando la query ya trae concentración específica el modelo realmente
+    // quiere UN resultado, no 5. Para queries genéricas dejamos hasta 5.
+    const trimmed = hasConcentration ? allMatches.slice(0, 1) : allMatches.slice(0, 5);
+
+    const matches = trimmed.map((r) => {
+      const slim: Record<string, string> = {
+        producto: [r[nameCol], concentracionCol ? r[concentracionCol] : ""]
           .filter(Boolean)
           .join(" "),
         precio_mxn_con_iva: r[priceColExact],
-        otros_datos: Object.fromEntries(
-          Object.entries(r).filter(
-            ([k, v]) =>
-              k !== priceColExact &&
-              !isPriceCol(k) &&
-              v &&
-              v.length > 0
-          )
-        ),
-      }))
-      .slice(0, 5);
+      };
+      if (skuCol && r[skuCol]) slim.sku = r[skuCol];
+      if (concentracionCol && r[concentracionCol]) slim.concentracion = r[concentracionCol];
+      return slim;
+    });
 
-    console.log(`[price] matched ${matches.length} results for "${input.product_name}"`);
+    console.log(
+      `[price] matched ${allMatches.length} (returning ${matches.length})` +
+        ` for "${input.product_name}"${hasConcentration ? " [concentration-specific]" : ""}`
+    );
     return { results: matches, price_column: priceColExact };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);

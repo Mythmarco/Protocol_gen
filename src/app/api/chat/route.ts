@@ -39,21 +39,30 @@ export async function POST(req: Request) {
     currentDraft?: ProtocoloData | null;
   };
 
-  // GPT-5.5 already knows today's date; just substitute the doctor's email.
-  const instructions = SYSTEM_PROMPT.replace(
-    '"creado_por": "..."',
-    `"creado_por": "${session.email}"`
-  ).replace(
-    '"fecha": "..."',
-    `"fecha": "${new Date().toISOString().slice(0, 10)}"`
-  );
+  // Prompt caching: instructions DEBE ser idéntico request-a-request para
+  // que OpenAI cachee el prefijo (~6k tokens, 50% descuento). Antes hacíamos
+  // .replace() con email+fecha → cada request tenía un instructions distinto
+  // → cache miss permanente. Ahora pasamos el contexto dinámico (fecha,
+  // email del doctor) como mensaje al inicio del input; instructions queda
+  // constante y se cachea bien. Los valores reales se inyectan también
+  // server-side via metadata-enricher post-finalize, así que el modelo no
+  // necesita ser exacto con ellos.
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const contextMessage = {
+    role: "user" as const,
+    content:
+      `### CONTEXTO_RUNTIME (lee y aplica, no respondas a este mensaje)\n` +
+      `Fecha de hoy: ${todayIso}\n` +
+      `Doctor (creado_por): ${session.email}\n` +
+      `Usa estos valores para los campos correspondientes del ProtocoloData.`,
+  };
 
   // Build input from the chat history. Responses API uses {role, content}.
   // If the UI is showing a generated draft, attach it to the LAST user turn
   // as a CURRENT_DRAFT block — the system prompt's "Modo edición" section
   // tells the model to treat it as ground truth and only call tools for
   // NEW data, instead of re-running the whole pipeline.
-  const input: ResponseInput = body.messages.map((m, i) => {
+  const historyInput: ResponseInput = body.messages.map((m, i) => {
     const isLastUser =
       i === body.messages.length - 1 && m.role === "user" && body.currentDraft;
     if (isLastUser) {
@@ -66,6 +75,7 @@ export async function POST(req: Request) {
     }
     return { role: m.role, content: m.content };
   });
+  const input: ResponseInput = [contextMessage, ...historyInput];
 
   const encoder = new TextEncoder();
 
@@ -76,7 +86,7 @@ export async function POST(req: Request) {
         for (let turn = 0; turn < 6; turn++) {
           const resp = await client.responses.create({
             model: TEXT_MODEL,
-            instructions,
+            instructions: SYSTEM_PROMPT, // constante → OpenAI prompt caching
             input,
             tools: OPENAI_RESPONSES_TOOLS,
             tool_choice: "auto",

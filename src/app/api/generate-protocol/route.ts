@@ -35,6 +35,9 @@ export async function POST(req: Request) {
 
   const { gathered } = (await req.json()) as { gathered: GatheredData };
 
+  // INSTRUCTIONS constantes (sin ${session.email} ni ${new Date()}) para que
+  // OpenAI cachee el prefijo del prompt entre requests (50% descuento input
+  // tokens). El contexto runtime se pasa como mensaje al inicio del input.
   const instructions = `# Role
 Eres el motor de razonamiento de Peptides4ALL. El médico habló por voz y un asistente conversacional recogió los datos en \`gathered\`. Tu trabajo: tomarlos, validarlos contra el catálogo, llenar huecos con las tools, y producir el ProtocoloData completo via finalize_protocol.
 
@@ -59,8 +62,8 @@ Lo que viene en \`gathered\` ES lo que el doctor dictó. NUNCA lo "optimices" o 
     c) Si el resultado excede 50 (no cabe en jeringa de 0.5 mL): caps a 50 u y AGREGA nota en peptidos[i].indicaciones: "Dosis ajustada a 50 u (capacidad jeringa 0.5 mL) — entrega aprox. X mg de los Y mg solicitados. Considerar jeringa 1 mL si se requiere dosis completa." Nunca sub-doses silenciosamente sin flag.
 
 # Campos del protocolo
-- metadata.creado_por = "${session.email}" (exacto)
-- metadata.fecha = ${new Date().toISOString().slice(0, 10)}
+- metadata.creado_por: usa el valor que viene en CONTEXTO_RUNTIME al inicio del input.
+- metadata.fecha: usa el valor de CONTEXTO_RUNTIME (hoy).
 - metadata.idioma = gathered.metadata.idioma
 - cotizacion.moneda = gathered.cotizacion.moneda
 - explicacion_stack: 1–2 párrafos de SINERGIA entre los péptidos elegidos. NO descripciones individuales recicladas del catálogo.
@@ -72,7 +75,18 @@ NO incluyas explicaciones técnicas ("Public MXN price $X IVA included", "Conver
 # Output
 LLAMA finalize_protocol con el JSON completo. No respondas con texto suelto.`;
 
+  // Runtime context (cambia cada request → fuera de instructions para no
+  // romper el cache). El modelo lo lee al inicio y lo aplica donde el
+  // instructions lo refiere.
+  const todayIso = new Date().toISOString().slice(0, 10);
   const input: OpenAI.Responses.ResponseInput = [
+    {
+      role: "user",
+      content:
+        `### CONTEXTO_RUNTIME\n` +
+        `Fecha de hoy: ${todayIso}\n` +
+        `Doctor (creado_por): ${session.email}\n`,
+    },
     {
       role: "user",
       content:
@@ -94,7 +108,13 @@ LLAMA finalize_protocol con el JSON completo. No respondas con texto suelto.`;
       input,
       tools: OPENAI_RESPONSES_TOOLS,
       tool_choice: "auto",
-      reasoning: { effort: "low" },
+      // medium en lugar de low: este endpoint corre la composición compleja
+      // (validar péptidos, calcular unidades, armar calendario y cotización
+      // con precios reales, redactar sinergia). low producía errores
+      // sistemáticos en cotizaciones con múltiples péptidos. medium agrega
+      // ~2-5s pero la tasa de errores baja notablemente. Chat de texto sigue
+      // en low porque sus turnos son simples (Q&A + lookups).
+      reasoning: { effort: "medium" },
       text: { verbosity: "low" },
       stream: false,
     });

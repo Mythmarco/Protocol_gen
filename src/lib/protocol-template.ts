@@ -170,10 +170,16 @@ export function buildProtocolHTML(data: ProtocoloData, options: BuildOptions = {
   })();
 
   const moneda = data.cotizacion.moneda ?? "MXN";
+  // Formato moneda explícito: MX$ vs US$ para eliminar ambigüedad. Intl
+  // localiza el número (1,234.50 vs 1.234,50) pero el prefijo lo escribimos
+  // a mano para garantizar consistencia visual MX$/US$ siempre.
+  const currencyPrefix = moneda === "USD" ? "US$" : "MX$";
+  const numberLocale = moneda === "USD" ? "en-US" : "es-MX";
   const money = (n: number) =>
-    moneda === "USD"
-      ? `$${n.toLocaleString("en-US", { minimumFractionDigits: 2 })}`
-      : `$${n.toLocaleString("es-MX", { minimumFractionDigits: 2 })}`;
+    `${currencyPrefix} ${n.toLocaleString(numberLocale, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}`;
 
   const indicacionesItems = protocolo.indicaciones_generales
     .map((i) => `<li>${i}</li>`)
@@ -233,6 +239,13 @@ export function buildProtocolHTML(data: ProtocoloData, options: BuildOptions = {
        initial-scale=1 la página empieza al 100% (más ancha que el celular)
        y el usuario tiene que pinch-out para ver el contenido completo. -->
   <meta name="viewport" content="width=794, user-scalable=yes, maximum-scale=5.0, minimum-scale=0.3"/>
+  <!-- Fonts: DM Sans (texto) + Plus Jakarta Sans (títulos). Chromium en
+       Vercel serverless no tiene fonts del sistema, así que cargamos por red
+       y el route hace setContent waitUntil:networkidle0 para garantizar que
+       lleguen antes de imprimir. Antes el PDF caía a Segoe/sans-serif. -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@500;700;800&display=swap" rel="stylesheet">
   <title>${paciente.nombre} | Peptides4ALL</title>
   <style>
     :root{--brand-dark:#504d4d;--brand-gold:#f2b056;--brand-gold-deep:#d9943f;--brand-gold-light:#f8d9a0;--brand-silver:#b2b0ae;--brand-warm-gray:#d7d5d3;--brand-off-white:#f8f7f6;--ink:#2f2d2d;--muted:#6b6868;--ok:#0f766e;--warning:#9a3412}
@@ -243,7 +256,7 @@ export function buildProtocolHTML(data: ProtocoloData, options: BuildOptions = {
     .content{position:relative;z-index:1}
     .header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding-bottom:12px;border-bottom:2px solid var(--brand-warm-gray)}
     .brand-row{display:flex;align-items:center;gap:10px}
-    .brand-logo{width:340px;max-width:100%;height:auto;display:block}
+    .brand-logo{width:200px;max-width:100%;height:auto;display:block}
     .doc-meta{text-align:right;font-size:12px;color:var(--muted);min-width:210px}
     h1{margin:14px 0 4px;font-size:26px;font-family:"Plus Jakarta Sans","DM Sans",sans-serif;letter-spacing:-.02em;color:var(--brand-dark)}
     .section{margin-top:14px}
@@ -260,6 +273,18 @@ export function buildProtocolHTML(data: ProtocoloData, options: BuildOptions = {
     .protocol-table tbody tr:last-child td,.schedule-table tbody tr:last-child td{border-bottom:0}
     .protocol-table th,.schedule-table th{background:#f8efe2;color:#5a4e3f;font-weight:800;text-transform:uppercase;letter-spacing:.05em;font-size:10px}
     .protocol-table td strong{color:var(--brand-dark)}
+    /* Highlight de la columna "Unidades de jeringa" — es el dato clínico
+       más crítico del PDF (lo que el paciente lee para preparar la inyección).
+       Background ámbar + font más grande + bold para que destaque del resto. */
+    .protocol-table th:nth-child(3),
+    .protocol-table td:nth-child(3){
+      background:#fdf2dd;
+      font-weight:800;
+      font-size:13px;
+      color:#7a5a25;
+      text-align:center;
+    }
+    .protocol-table th:nth-child(3){font-size:10px}
     .schedule-table{font-size:11px;table-layout:fixed}
     .schedule-table td{text-align:center;font-weight:700}
     .schedule-table td:first-child,.schedule-table th:first-child{text-align:left;width:118px;font-weight:800}
@@ -290,10 +315,13 @@ export function buildProtocolHTML(data: ProtocoloData, options: BuildOptions = {
     .quote-summary-row.discount>div:last-child{color:var(--warning)}
     .footer{margin-top:12px;padding-top:8px;border-top:1px solid #e7e4e1;font-size:10px;color:var(--muted);display:flex;justify-content:space-between;gap:12px}
     .stack-section,.stack-section .card,.indicaciones-section,.indicaciones-section .card{break-inside:avoid-page;page-break-inside:avoid}
-    @page{size:A4;margin:0}
+    /* Puppeteer maneja los márgenes vía displayHeaderFooter — no fijamos
+       margin en @page. El padding interno de .page en print se reduce porque
+       el header/footer de Puppeteer ya ocupan ~14mm arriba y ~12mm abajo. */
+    @page{size:A4}
     @media print{
       body{background:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-      .page{margin:0;width:100%;min-height:auto;box-shadow:none;padding:11mm 10mm}
+      .page{margin:0;width:100%;min-height:auto;box-shadow:none;padding:6mm 10mm 6mm}
       .post-calendar-page,.quote-page{page-break-before:always;break-before:page;margin-top:0}
       main.page.protocol-page .footer{display:none}
     }

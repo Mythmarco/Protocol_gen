@@ -156,11 +156,50 @@ export async function POST(req: Request) {
     page = await browser.newPage();
     page.setDefaultNavigationTimeout(30_000);
     page.setDefaultTimeout(30_000);
+    // setContent en puppeteer-core 25 solo acepta "load"/"domcontentloaded"
+     // (no "networkidle0"). Después esperamos explícitamente: (1) red
+     // tranquila ≥500ms para fonts/CSS externos, (2) document.fonts.ready
+     // para que las DM Sans/Plus Jakarta carguen antes del print. Antes el
+     // PDF salía con Segoe (fallback de Chromium serverless).
     await page.setContent(html, { waitUntil: "load", timeout: 30_000 });
+    await page
+      .waitForNetworkIdle({ idleTime: 500, timeout: 10_000 })
+      .catch(() => undefined);
+    await page.evaluate(() => document.fonts.ready);
+
+    // Sanitize header values to safe text en el header template HTML.
+    const escapeHTML = (s: string) =>
+      s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const headerFolio = escapeHTML(folio);
+    const headerPaciente = escapeHTML(protocolData.paciente.nombre);
+
+    // headerTemplate y footerTemplate son HTML separados que Puppeteer
+    // renderiza por página. Default font-size es 5px (inutilizable), hay
+    // que setearlo explícito. Las clases .pageNumber y .totalPages las
+    // rellena Puppeteer en cada página.
+    const headerTemplate = `
+      <div style="width:100%;font-size:9px;color:#888;padding:0 12mm;
+                  display:flex;justify-content:space-between;align-items:center;
+                  font-family:'DM Sans','Helvetica',sans-serif;">
+        <span style="font-weight:600;color:#666;">${headerPaciente}</span>
+        <span style="font-family:'Menlo','Courier New',monospace;font-weight:700;color:#d9943f;">${headerFolio}</span>
+      </div>`;
+    const footerTemplate = `
+      <div style="width:100%;font-size:9px;color:#aaa;padding:0 12mm;
+                  display:flex;justify-content:center;
+                  font-family:'DM Sans','Helvetica',sans-serif;">
+        <span>Pág <span class="pageNumber"></span> de <span class="totalPages"></span></span>
+      </div>`;
+
     pdf = await page.pdf({
       format: "A4",
       printBackground: true,
-      margin: { top: 0, right: 0, bottom: 0, left: 0 },
+      // Espacio para header (top) y footer (bottom). El template HTML interno
+      // ya redujo su padding @media print para que no haya doble margen.
+      margin: { top: "14mm", right: "0", bottom: "12mm", left: "0" },
+      displayHeaderFooter: true,
+      headerTemplate,
+      footerTemplate,
       timeout: 30_000,
     });
     console.log(`[pdf] rendered ${pdf.byteLength} bytes`);
