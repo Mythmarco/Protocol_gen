@@ -290,7 +290,15 @@ function buildTools(callbacks: HandoffCallbacks) {
         }
         const { protocol } = (await res.json()) as { protocol: ProtocoloData };
 
-        // Step 3 — renderiza HTML del preview y escríbelo en la pestaña.
+        // Step 3 — renderiza HTML del preview y navega la pestaña al
+        // documento nuevo via Blob URL. Antes usábamos document.write
+        // sobre el about:blank pre-abierto, pero iOS Safari NO re-procesa
+        // el <meta viewport> cuando el doc se reescribe en vivo — se
+        // quedaba con el "width=device-width, initial-scale=1" del
+        // placeholder y el PDF (que usa width=794) salía mal alineado
+        // hasta que el doctor cerraba y abría. Navegar a un Blob URL
+        // fuerza un load completo del documento → meta viewport se lee
+        // limpio, render fit-to-width desde el primer paint.
         let tabFilled = false;
         if (bridgeTab && !bridgeTab.closed) {
           try {
@@ -302,10 +310,18 @@ function buildTools(callbacks: HandoffCallbacks) {
             if (previewRes.ok) {
               const html = await previewRes.text();
               const htmlWithClose = injectMobilePreviewCloseButton(html);
-              bridgeTab.document.open();
-              bridgeTab.document.write(htmlWithClose);
-              bridgeTab.document.close();
+              const blob = new Blob([htmlWithClose], {
+                type: "text/html;charset=utf-8",
+              });
+              const blobUrl = URL.createObjectURL(blob);
+              // location.replace en lugar de href = evita que "atrás" en
+              // Safari mande al placeholder vacío.
+              bridgeTab.location.replace(blobUrl);
               tabFilled = true;
+              // No revokemos el blob inmediatamente — Safari necesita el
+              // URL durante el load. Revocamos en 60s para no fugar
+              // memoria si el doctor deja el tab abierto.
+              setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
             } else {
               bridgeTab.close();
             }

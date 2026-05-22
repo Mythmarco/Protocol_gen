@@ -308,10 +308,19 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
           if (!res.ok) throw new Error("preview failed");
           const html = await res.text();
           if (tab) {
+            // Navegamos al Blob URL en lugar de document.write — iOS Safari
+            // no re-procesa el meta viewport cuando el documento se reescribe
+            // en vivo, y el doctor reportaba que la primera vez se veía mal
+            // alineada y había que cerrar/abrir. Con Blob URL es un load
+            // completo del documento → viewport fit-to-width desde el primer
+            // paint.
             const htmlWithClose = injectMobilePreviewCloseButton(html);
-            tab.document.open();
-            tab.document.write(htmlWithClose);
-            tab.document.close();
+            const blob = new Blob([htmlWithClose], {
+              type: "text/html;charset=utf-8",
+            });
+            const blobUrl = URL.createObjectURL(blob);
+            tab.location.replace(blobUrl);
+            setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
           }
         } catch (err) {
           console.error(err);
@@ -1705,40 +1714,56 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
               </div>
             )}
             {!previewLoading && (
-              // iframe a ancho fijo de A4 (794px = 210mm @ 96dpi). En
-              // desktop el contenedor es más ancho → centrado natural; en
-              // iframe a 794px (A4 real). En desktop el contenedor lo
-              // centra sin problema. En móvil usamos CSS transform scale
-              // calculado al ancho del viewport para que el primer paint
-              // sea fit-to-screen (era el bug: "primera vez sale zoomed-in
-              // y no me deja pinch"). Pinch-zoom dentro del iframe srcDoc
-              // no funciona en iOS, pero al menos arranca legible. Para
-              // pinch real el doctor toca "Vista previa" otra vez (gesture
-              // mode → new tab nativo de Safari).
-              <div
-                className="mx-auto"
-                style={{
-                  width: 794,
-                  transformOrigin: "top center",
-                  transform:
-                    typeof window !== "undefined" && window.innerWidth < 768
-                      ? `scale(${Math.min(1, (window.innerWidth - 16) / 794)})`
-                      : "none",
-                }}
-              >
-                <iframe
-                  srcDoc={previewHTML}
-                  title="Vista previa del protocolo"
-                  className="bg-white block"
-                  sandbox="allow-same-origin"
-                  style={{
-                    width: 794,
-                    height: "calc(100dvh - 60px)",
-                    border: 0,
-                    animation: "fadeIn 250ms ease-out",
-                  }}
-                />
-              </div>
+              // iframe a ancho fijo de A4 (794px = 210mm @ 96dpi).
+              // En desktop NO escalamos — el contenedor ya es más ancho.
+              // En móvil aplicamos transform: scale(viewport/794) con
+              // transformOrigin "top left" para que el visual escalado
+              // ARRANQUE en el borde izquierdo del modal y no se salga.
+              // Antes usábamos "top center" + mx-auto, lo que dejaba el
+              // visual centrado en x=397 del box no-escalado de 794 —
+              // dentro de un viewport de 390 el visible era la mitad
+              // DERECHA del protocolo (Patient Data corrido, header
+              // cortado). Era el bug "se ve mal alineada y tengo que
+              // cerrar y abrir".
+              (() => {
+                const vw =
+                  typeof window !== "undefined" ? window.innerWidth : 0;
+                const isMobile = vw > 0 && vw < 768;
+                const scale = isMobile
+                  ? Math.min(1, (vw - 16) / 794)
+                  : 1;
+                return (
+                  <div
+                    style={{
+                      width: isMobile ? vw - 16 : 794,
+                      marginLeft: "auto",
+                      marginRight: "auto",
+                      overflow: "hidden",
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: 794,
+                        transformOrigin: "top left",
+                        transform: `scale(${scale})`,
+                      }}
+                    >
+                      <iframe
+                        srcDoc={previewHTML}
+                        title="Vista previa del protocolo"
+                        className="bg-white block"
+                        sandbox="allow-same-origin"
+                        style={{
+                          width: 794,
+                          height: `calc((100dvh - 60px) / ${scale})`,
+                          border: 0,
+                          animation: "fadeIn 250ms ease-out",
+                        }}
+                      />
+                    </div>
+                  </div>
+                );
+              })()
             )}
           </div>
         </div>

@@ -250,7 +250,16 @@ export function buildProtocolHTML(data: ProtocoloData, options: BuildOptions = {
   <style>
     :root{--brand-dark:#504d4d;--brand-gold:#f2b056;--brand-gold-deep:#d9943f;--brand-gold-light:#f8d9a0;--brand-silver:#b2b0ae;--brand-warm-gray:#d7d5d3;--brand-off-white:#f8f7f6;--ink:#2f2d2d;--muted:#6b6868;--ok:#0f766e;--warning:#9a3412}
     *{box-sizing:border-box}
-    html,body{margin:0;padding:0;color:var(--ink);background:#f5f3f1;font-family:"DM Sans","Plus Jakarta Sans","Segoe UI",sans-serif;line-height:1.4}
+    /* -webkit-text-size-adjust: 100% — APAGA el "auto-resize" que iOS
+       Safari aplica cuando piensa que un bloque de texto es muy chico
+       o muy ancho (https://webkit.org/blog/3514/web-inspector-text-readability/).
+       Sin esto: las dos columnas Syringe + Reconstitution salen mas
+       chicas y las secciones full-width "General Indications" y "Stack"
+       salen mas grandes, aunque ambas tienen font-size:12px en CSS.
+       Resultado visual: bullets de tamaños distintos en la misma pagina
+       (bug que el doctor reporto en pagina 2). text-size-adjust:100%
+       es la version estandar (Firefox, Chrome desktop). */
+    html,body{margin:0;padding:0;color:var(--ink);background:#f5f3f1;font-family:"DM Sans","Plus Jakarta Sans","Segoe UI",sans-serif;line-height:1.4;-webkit-text-size-adjust:100%;text-size-adjust:100%}
     .page{width:210mm;min-height:297mm;margin:16px auto;padding:18mm 16mm 16mm;background:#fff;box-shadow:0 22px 50px rgba(34,30,28,.12);position:relative;overflow:hidden}
     /* Decoración solo en pantalla. En PDF estos gradientes radiales se
        convertían en objetos vectoriales pesados que hacían el scroll
