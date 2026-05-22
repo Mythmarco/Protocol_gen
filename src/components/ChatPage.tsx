@@ -76,6 +76,17 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
   } | null>(null);
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [isSharing, setIsSharing] = useState(false);
+  // Web Share API con files (level 2) — solo en HTTPS y solo cuando el
+  // browser puede compartir blobs PDF. Lo detectamos al montar para que
+  // el botón Compartir aparezca o no de manera estable durante la sesión
+  // (evita flicker si el doctor recarga). iOS Safari standalone: SÍ.
+  // Chrome desktop: NO (al menos hasta el 122). El fallback en desktop
+  // es copiar la URL de Drive al portapapeles.
+  const canShareFiles =
+    typeof navigator !== "undefined" &&
+    typeof navigator.share === "function" &&
+    typeof navigator.canShare === "function";
   const [history, setHistory] = useState<HistoryItem[]>(initialHistory);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   // Mobile-only: which bottom sheet is open
@@ -528,111 +539,216 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
   const renderProtocolActionCard = (protocol: ProtocoloData) => {
     const isArchived =
       savedSnapshot != null && savedSnapshot.datos_json === protocol;
+    // 4 botones unificados — el orden es el mismo en draft y archivado
+    // para que el doctor encuentre cada acción siempre en el mismo lugar.
+    // Si no está archivado, "Guardar" sube a Drive + BD; si ya está, ese
+    // botón se reemplaza por un badge "Archivado" + el link a Drive.
     return (
-      <div className="mt-3 pt-3 border-t border-stone-100 flex flex-wrap items-center gap-2">
-        {isArchived ? (
-          <span
-            className="flex items-center gap-1 text-xs bg-stone-100 text-stone-600 px-2 py-0.5 rounded-full font-medium"
-            title={
-              savedSnapshot?.folio
-                ? `Folio ${savedSnapshot.folio} guardado en Drive`
-                : "Guardado en Drive"
-            }
-          >
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-              <polyline points="20 6 9 17 4 12" />
-            </svg>
-            Archivado{savedSnapshot?.folio ? ` · ${savedSnapshot.folio}` : ""}
-          </span>
-        ) : (
-          <span className="text-xs text-green-600 font-medium">
-            ✓ Protocolo generado
-          </span>
-        )}
+      <div className="mt-1 flex flex-col gap-2">
+        <div className="flex items-center justify-between gap-2">
+          {isArchived ? (
+            <span
+              className="flex items-center gap-1 text-[11px] bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full font-semibold"
+              title={
+                savedSnapshot?.folio
+                  ? `Folio ${savedSnapshot.folio} guardado en Drive`
+                  : "Guardado en Drive"
+              }
+            >
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+              Archivado{savedSnapshot?.folio ? ` · ${savedSnapshot.folio}` : ""}
+            </span>
+          ) : (
+            <span className="text-[11px] text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full font-semibold">
+              ✓ Protocolo generado
+            </span>
+          )}
+          {isArchived && savedSnapshot?.driveUrl && (
+            <a
+              href={savedSnapshot.driveUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[11px] text-stone-500 hover:text-amber-600 underline underline-offset-2"
+            >
+              Abrir en Drive
+            </a>
+          )}
+        </div>
 
-        <div className="ml-auto flex items-center gap-2">
+        <div className="grid grid-cols-2 gap-1.5">
           <button
             onClick={() => openPreview(protocol)}
-            className="text-xs border border-stone-300 hover:border-amber-400 text-stone-600 hover:text-amber-600 rounded-lg px-2.5 py-1 font-medium transition-colors"
+            className="flex items-center justify-center gap-1.5 text-xs border border-stone-300 hover:border-amber-400 bg-white text-stone-700 hover:text-amber-700 rounded-lg px-2 py-1.5 font-semibold transition-colors"
           >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+            </svg>
             Vista previa
           </button>
 
+          <button
+            onClick={() => handleDownloadOnly(protocol)}
+            disabled={isDownloading}
+            className="flex items-center justify-center gap-1.5 text-xs border border-stone-300 hover:border-amber-400 bg-white text-stone-700 hover:text-amber-700 disabled:opacity-60 rounded-lg px-2 py-1.5 font-semibold transition-colors"
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+            {isDownloading ? "Descargando…" : "Descargar"}
+          </button>
+
           {isArchived ? (
-            <>
-              {savedSnapshot?.driveUrl && (
-                <a
-                  href={savedSnapshot.driveUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-xs border border-stone-300 hover:border-amber-400 text-stone-600 hover:text-amber-600 rounded-lg px-2.5 py-1 font-medium transition-colors"
-                >
-                  Abrir en Drive
-                </a>
-              )}
-              <button
-                onClick={handleDownloadArchived}
-                disabled={isDownloading}
-                className="text-xs bg-amber-500 hover:bg-amber-400 disabled:opacity-60 text-white rounded-lg px-2.5 py-1 font-medium transition-colors"
-              >
-                {isDownloading ? "Descargando…" : "Descargar"}
-              </button>
-            </>
+            <button
+              disabled
+              className="flex items-center justify-center gap-1.5 text-xs border border-stone-200 bg-stone-50 text-stone-400 rounded-lg px-2 py-1.5 font-semibold cursor-not-allowed"
+              title="Ya está guardado en Drive"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="20 6 9 17 4 12"/>
+              </svg>
+              Guardado
+            </button>
           ) : (
             <button
               onClick={handleDownloadPDF}
               disabled={isGeneratingPDF}
-              className="text-xs bg-amber-500 hover:bg-amber-400 disabled:opacity-60 text-white rounded-lg px-2.5 py-1 font-medium transition-colors"
+              className="flex items-center justify-center gap-1.5 text-xs bg-amber-500 hover:bg-amber-400 disabled:opacity-60 text-white rounded-lg px-2 py-1.5 font-semibold transition-colors"
             >
-              {isGeneratingPDF ? "Guardando…" : "Guardar PDF"}
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>
+              </svg>
+              {isGeneratingPDF ? "Guardando…" : "Guardar"}
             </button>
           )}
+
+          <button
+            onClick={() => handleShare(protocol)}
+            disabled={isSharing}
+            className="flex items-center justify-center gap-1.5 text-xs border border-stone-300 hover:border-amber-400 bg-white text-stone-700 hover:text-amber-700 disabled:opacity-60 rounded-lg px-2 py-1.5 font-semibold transition-colors"
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+            </svg>
+            {isSharing
+              ? "Compartiendo…"
+              : canShareFiles
+              ? "Compartir"
+              : "Copiar link"}
+          </button>
         </div>
       </div>
     );
   };
 
-  const handleDownloadArchived = async () => {
-    if (!savedSnapshot) return;
+  // Render PDF SIN archivar — no folio nuevo, no Drive upload, no row
+  // en Supabase. Lo usan los botones "Descargar" y "Compartir" para
+  // obtener el blob del PDF sin afectar el estado de "archivado".
+  // El folio que regresa el server es el guardado en datos_json (o
+  // vacío si nunca se guardó).
+  const fetchPdfBlob = async (protocol: ProtocoloData): Promise<{ blob: Blob; folio: string }> => {
+    const res = await fetch("/api/pdf", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ protocolData: protocol, mode: "download" }),
+    });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      throw new Error(
+        `PDF API ${res.status}${detail ? ` — ${detail.slice(0, 200)}` : ""}`
+      );
+    }
+    const folio =
+      res.headers.get("X-Folio") ||
+      protocol.cotizacion?.folio ||
+      "";
+    const blob = await res.blob();
+    return { blob, folio };
+  };
+
+  const handleDownloadOnly = async (protocol: ProtocoloData) => {
     setIsDownloading(true);
     try {
-      const res = await fetch("/api/pdf", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          protocolData: savedSnapshot.datos_json,
-          mode: "download",
-        }),
-      });
-      if (!res.ok) {
-        const detail = await res.text().catch(() => "");
-        throw new Error(
-          `PDF API ${res.status}${detail ? ` — ${detail.slice(0, 200)}` : ""}`
-        );
-      }
-
-      const folio = res.headers.get("X-Folio") || savedSnapshot.folio || "";
-      const blob = await res.blob();
+      const { blob, folio } = await fetchPdfBlob(protocol);
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
-      const nombreSlug = savedSnapshot.datos_json.paciente.nombre
+      const nombreSlug = protocol.paciente.nombre
         .toLowerCase()
         .replace(/\s+/g, "-")
         .replace(/[^a-z0-9-]/g, "");
       a.href = url;
-      a.download = `${folio || nombreSlug}-${savedSnapshot.datos_json.metadata.fecha}.pdf`;
+      a.download = `${folio || nombreSlug}-${protocol.metadata.fecha}.pdf`;
       a.click();
       URL.revokeObjectURL(url);
     } catch (err) {
       console.error(err);
       showToast("error", {
         message:
-          err instanceof Error
-            ? err.message
-            : "No se pudo descargar el PDF.",
+          err instanceof Error ? err.message : "No se pudo descargar el PDF.",
       });
     } finally {
       setIsDownloading(false);
+    }
+  };
+
+  const handleShare = async (protocol: ProtocoloData) => {
+    setIsSharing(true);
+    try {
+      const { blob, folio } = await fetchPdfBlob(protocol);
+      const nombreSlug = protocol.paciente.nombre
+        .toLowerCase()
+        .replace(/\s+/g, "-")
+        .replace(/[^a-z0-9-]/g, "");
+      const fileName = `${folio || nombreSlug}-${protocol.metadata.fecha}.pdf`;
+      const file = new File([blob], fileName, { type: "application/pdf" });
+      const shareData = {
+        files: [file],
+        title: `Protocolo de ${protocol.paciente.nombre}`,
+        text: `Protocolo Peptides4ALL — ${protocol.paciente.nombre}`,
+      };
+
+      if (
+        typeof navigator !== "undefined" &&
+        typeof navigator.canShare === "function" &&
+        navigator.canShare(shareData) &&
+        typeof navigator.share === "function"
+      ) {
+        await navigator.share(shareData);
+      } else {
+        // Fallback desktop / browsers sin Web Share API Level 2: si el
+        // protocolo está archivado, copiamos la URL de Drive. Si no,
+        // simplemente disparamos descarga local.
+        const driveUrl =
+          savedSnapshot?.datos_json === protocol ? savedSnapshot.driveUrl : null;
+        if (driveUrl) {
+          await navigator.clipboard.writeText(driveUrl);
+          showToast("ok", {
+            message: "Link de Drive copiado al portapapeles.",
+          });
+        } else {
+          // Sin fallback razonable → descarga local.
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = fileName;
+          a.click();
+          URL.revokeObjectURL(url);
+          showToast("warning", {
+            message: "Compartir directo no disponible — PDF descargado.",
+          });
+        }
+      }
+    } catch (err) {
+      // AbortError = el usuario canceló el share sheet, no es error real.
+      if (err instanceof Error && err.name === "AbortError") return;
+      console.error(err);
+      showToast("error", {
+        message:
+          err instanceof Error ? err.message : "No se pudo compartir el PDF.",
+      });
+    } finally {
+      setIsSharing(false);
     }
   };
 

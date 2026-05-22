@@ -50,6 +50,17 @@ Lo que viene en \`gathered\` ES lo que el doctor dictó. NUNCA lo "optimices" o 
 3. La ÚNICA exclusión absoluta: NUNCA cotices jeringas. Esa es la única regla. Cualquier otro insumo SÍ va.
 4. Construye el ProtocoloData y llama finalize_protocol.
 
+# Latencia — TOOLS EN PARALELO (CRÍTICO)
+El doctor espera ~20-40 segundos por este endpoint y eso es DEMASIADO. Para bajar latencia: **emite TODAS las tool calls independientes en el MISMO turno**, en un único response. NO las hagas en serie (una por turno).
+
+Ejemplo correcto — turno 1 emite 6 tool calls en paralelo:
+- get_peptide_info("Retatrutida"), get_peptide_info("Tirzepatida"), get_peptide_info("Ipamorelin")
+- get_product_price("Retatrutida 15mg"), get_product_price("Tirzepatida 30mg"), get_product_price("Agua bacteriostática")
+
+Ejemplo MALO — 6 turnos secuenciales, 5x más lento.
+
+Idealmente: **2 turnos máximo**. Turno 1 = todos los lookups en paralelo. Turno 2 = finalize_protocol con la composición final. No hay razón para más turnos.
+
 # Reglas duras de fidelidad a los datos dictados
 - **Presentación del vial (mg)**: si gathered.peptidos[i].presentacion = "15 mg", úsalo EXACTAMENTE. Cotiza "Retatrutida 15 mg", no 30 mg. Aunque el catálogo solo tenga 30 mg.
 - **Unidades de jeringa**: si gathered.peptidos[i].unidades_jeringa = "50", úsalas TAL CUAL en el calendario y en peptidos.indicaciones. NO recalcules.
@@ -101,9 +112,15 @@ LLAMA finalize_protocol con el JSON completo. No respondas con texto suelto.`;
   ];
 
   let finalProtocol: ProtocoloData | null = null;
+  const t0 = Date.now();
 
-  // Agentic loop
-  for (let turn = 0; turn < 8; turn++) {
+  // Agentic loop. Max 5 turns (era 8) — el prompt ahora obliga a tools
+  // en paralelo, deberían bastar 2 turnos en el caso típico (lookups +
+  // finalize). 5 es el techo defensivo para edge cases con péptidos
+  // que requieren lookups extra. Antes el 8 enmascaraba el bug de
+  // llamadas seriales — el modelo aprovechaba todos los turnos.
+  for (let turn = 0; turn < 5; turn++) {
+    const tTurn = Date.now();
     const resp = await client.responses.create({
       model: TEXT_MODEL,
       instructions,
@@ -159,42 +176,55 @@ LLAMA finalize_protocol con el JSON completo. No respondas con texto suelto.`;
       break;
     }
 
-    // Execute lookups, continue
+    // Execute lookups EN PARALELO. Antes era un for/await secuencial
+    // que sumaba la latencia de cada tool (peptide ~50ms, price ~200ms
+    // por ser HTTP a Google Sheets). Con 6 tools en serie eso suma
+    // ~1.5s muerto; con Promise.all baja a ~250ms (max(individuales)).
     const lookups = turnToolCalls.filter((c) => c.name !== "finalize_protocol");
     if (lookups.length === 0) {
       console.warn("[generate-protocol] model stopped without calling finalize_protocol");
       break;
     }
 
-    for (const tc of lookups) {
-      let args: Record<string, unknown> = {};
-      try {
-        args = tc.arguments ? JSON.parse(tc.arguments) : {};
-      } catch {}
+    const results = await Promise.all(
+      lookups.map(async (tc) => {
+        let args: Record<string, unknown> = {};
+        try {
+          args = tc.arguments ? JSON.parse(tc.arguments) : {};
+        } catch {}
 
-      let result: unknown;
-      if (tc.name === "get_peptide_info") {
-        result = await executePeptideTool(args as { name: string });
-      } else if (tc.name === "list_peptides") {
-        result = await executeListPeptidesTool();
-      } else if (tc.name === "get_product_price") {
-        result = await executePriceTool(args as { product_name: string });
-      } else if (tc.name === "search_past_protocols") {
-        result = await executeMemoryTool(
-          args as { query: string; limit?: number },
-          session.id
-        );
-      } else {
-        result = { error: `unknown tool: ${tc.name}` };
-      }
+        let result: unknown;
+        if (tc.name === "get_peptide_info") {
+          result = await executePeptideTool(args as { name: string });
+        } else if (tc.name === "list_peptides") {
+          result = await executeListPeptidesTool();
+        } else if (tc.name === "get_product_price") {
+          result = await executePriceTool(args as { product_name: string });
+        } else if (tc.name === "search_past_protocols") {
+          result = await executeMemoryTool(
+            args as { query: string; limit?: number },
+            session.id
+          );
+        } else {
+          result = { error: `unknown tool: ${tc.name}` };
+        }
+        return { tc, result };
+      })
+    );
 
+    for (const { tc, result } of results) {
       input.push({
         type: "function_call_output",
         call_id: tc.call_id,
         output: JSON.stringify(result),
       } as OpenAI.Responses.ResponseInputItem);
     }
+    console.log(
+      `[generate-protocol] turn ${turn + 1}: ${lookups.length} tools, ${Date.now() - tTurn}ms`
+    );
   }
+
+  console.log(`[generate-protocol] total ${Date.now() - t0}ms`);
 
   if (!finalProtocol) {
     return Response.json(

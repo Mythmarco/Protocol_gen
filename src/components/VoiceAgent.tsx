@@ -47,10 +47,21 @@ interface Props {
 // → GPT-5.5 reasoning → full ProtocoloData). After handoff, the voice agent
 // receives the protocol JSON and the UI opens the preview.
 
-function buildTools(
-  onHandoff: (data: ProtocoloData) => void,
-  onHandoffComplete: () => void
-) {
+interface HandoffCallbacks {
+  /** Disparado APENAS handoff_to_reasoning empieza — antes del fetch.
+   *  Sirve para cancelar audio + cambiar el status del UI a "Generando…" */
+  onHandoffStart: () => void;
+  /** Recibe el protocolo ya producido. El consumer (ChatPage) setea
+   *  pendingProtocol → bottomActionCard aparece debajo del último mensaje. */
+  onHandoff: (data: ProtocoloData) => void;
+  /** Tras escribir el HTML en la pestaña nueva (o fallar), inyecta el
+   *  mensaje sintético "Listo…" en el transcript y cierra la sesión.
+   *  El agente NO habla este mensaje — lo escribimos como texto. */
+  onHandoffDone: (message: string) => void;
+}
+
+function buildTools(callbacks: HandoffCallbacks) {
+  const { onHandoffStart, onHandoff, onHandoffDone } = callbacks;
   // Detección de móvil — solo intentamos pre-abrir tab en móvil porque en
   // desktop el modal es más cómodo (pinch-zoom no aplica).
   const isMobile = () =>
@@ -234,11 +245,18 @@ function buildTools(
         // Strict-typed object → no JSON.parse crashes from control chars.
         const gathered = input as Record<string, unknown>;
 
-        // INTENTO 1 (móvil): abrir tab placeholder SINCRÓNICAMENTE en el
+        // Step 0 — corta audio del agente y voltea el UI a "Generando…".
+        // Esto NO depende del modelo (que ya demostró no ser confiable
+        // para callar tras la tool call). El UI muestra el orb thinking
+        // con label "Generando protocolo…" y el doctor entiende que la
+        // espera es del backend, no de él.
+        onHandoffStart();
+
+        // Step 1 (móvil): abrir tab placeholder SINCRÓNICAMENTE en el
         // mismo tick en que el tool execute arranca. En iOS PWA standalone
         // a veces funciona aunque el gesture original (tap del mic) sea
         // viejo — es la mejor heurística que tenemos. Si el popup blocker
-        // lo rechaza, `tab` será null y caemos al modal del ChatPage.
+        // lo rechaza, `bridgeTab` será null y mostramos modal in-app.
         let bridgeTab: Window | null = null;
         if (isMobile()) {
           try {
@@ -254,6 +272,7 @@ function buildTools(
           }
         }
 
+        // Step 2 — genera el protocolo (~15-30s con GPT-5.5 reasoning).
         const res = await fetch("/api/generate-protocol", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -262,15 +281,16 @@ function buildTools(
         if (!res.ok) {
           if (bridgeTab && !bridgeTab.closed) bridgeTab.close();
           const err = await res.json().catch(() => ({}));
+          onHandoffDone(
+            "Hubo un error generando el protocolo. Vuelve a intentar tocando el micrófono."
+          );
           return JSON.stringify({
             error: err.error ?? `handoff failed: ${res.status}`,
           });
         }
         const { protocol } = (await res.json()) as { protocol: ProtocoloData };
 
-        // Si el tab placeholder está vivo, llenamos el HTML del preview.
-        // Si no (popup blocker o usuario lo cerró), el ChatPage abrirá el
-        // modal fallback via onHandoff.
+        // Step 3 — renderiza HTML del preview y escríbelo en la pestaña.
         let tabFilled = false;
         if (bridgeTab && !bridgeTab.closed) {
           try {
@@ -297,16 +317,23 @@ function buildTools(
           }
         }
 
-        // Notifica al ChatPage. Le decimos si el tab ya quedó renderizado
-        // — si sí, ChatPage solo setea pendingProtocol; si no, abre el
-        // modal in-app como fallback.
+        // Step 4 — entrega el protocolo a ChatPage. Esto setea
+        // pendingProtocol → bottomActionCard aparece bajo el último mensaje.
         onHandoff(protocol);
-        onHandoffComplete();
+
+        // Step 5 — inyecta el mensaje sintético "Listo…" en el transcript
+        // y cierra la sesión. El agente NO va a hablar este mensaje (su
+        // audio ya fue cancelado en onHandoffStart y la sesión se cierra
+        // aquí). Es texto puro — lo escribimos directamente en el UI.
+        const closingMessage = tabFilled
+          ? `Listo, el protocolo de ${protocol.paciente.nombre} se abrió en una pestaña nueva. Si necesitas cambios, vuelve a tocar el micrófono.`
+          : `Listo, el protocolo de ${protocol.paciente.nombre} está abajo. Si necesitas cambios, vuelve a tocar el micrófono.`;
+        onHandoffDone(closingMessage);
+
+        // El return ya no importa para el agente (sesión cerrada) — lo
+        // dejamos por contrato con el SDK.
         return JSON.stringify({
           ok: true,
-          message: tabFilled
-            ? `Protocolo de ${protocol.paciente.nombre} listo. El PDF se abrió en una pestaña nueva. Di UNA frase corta de cierre y NO hagas más preguntas.`
-            : `Protocolo de ${protocol.paciente.nombre} listo. La vista previa está abajo. Di UNA frase corta de cierre y NO hagas más preguntas.`,
           paciente: protocol.paciente.nombre,
           preview_opened_in_new_tab: tabFilled,
         });
@@ -616,16 +643,11 @@ export default function VoiceAgent({
     : status === "speaking" ? "speaking"
     : status === "thinking" ? "thinking"
     : "idle";
-  // Once the handoff tool returns, we start a single timer that closes the
-  // session after the agent has had a few seconds to say its final "Listo"
-  // line. Using a timer (not an event) prevents the loop where the agent
-  // keeps re-speaking the same line if it picks up stray audio.
-  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // True después de que handoff_to_reasoning regresó OK. Cuando es true y
-  // detectamos audio_stopped (agente terminó de hablar), cerramos en 1.5s
-  // — evita el bug "repite Listo 3 veces" si el modelo ignora el
-  // create_response:false del server.
-  const postHandoffRef = useRef(false);
+  // True mientras el handoff está corriendo (entre handoff_to_reasoning
+  // start y done). Cuando true, el orb se queda en "thinking" y el mic
+  // está mute. NO usamos al agente para nada — el cierre lo controlamos
+  // nosotros desde onHandoffDone.
+  const handoffActiveRef = useRef(false);
 
   // Mic mute helper — accede al MediaStreamTrack del audio sender del
   // WebRTC peer connection y lo des/habilita. Critico para:
@@ -661,10 +683,6 @@ export default function VoiceAgent({
   }, [transcript, bottomActionCard]);
 
   const cleanup = useCallback(() => {
-    if (closeTimerRef.current) {
-      clearTimeout(closeTimerRef.current);
-      closeTimerRef.current = null;
-    }
     // Wrap in try/catch — the SDK throws "WebRTC data channel is not connected"
     // if a tool call resolves after we close. Harmless, suppress it.
     try {
@@ -674,6 +692,7 @@ export default function VoiceAgent({
     }
     sessionRef.current = null;
     aiAmpRef.current = 0;
+    handoffActiveRef.current = false;
   }, []);
 
   useEffect(() => () => cleanup(), [cleanup]);
@@ -688,10 +707,7 @@ export default function VoiceAgent({
 
     setError(null);
     setStatus("connecting");
-    if (closeTimerRef.current) {
-      clearTimeout(closeTimerRef.current);
-      closeTimerRef.current = null;
-    }
+    handoffActiveRef.current = false;
     // Keep prior transcript visible so the agent (and the doctor) can reference it.
     // We only clear when the user explicitly hits "O empieza una conversación nueva".
     const priorTranscript = transcript;
@@ -709,57 +725,48 @@ export default function VoiceAgent({
       const agent = new RealtimeAgent({
         name: "p4a-voice-agent",
         instructions: VOICE_INSTRUCTIONS(doctorName, priorTranscript),
-        tools: buildTools(onProtocolGenerated, () => {
-          // After handoff completes, tell the realtime server to STOP
-          // creating new responses on user input. The agent finishes its
-          // current "Listo…" line and then stays silent even if it hears
-          // ambient noise. Prevents the repeated "Listo" loop.
-          try {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const transport = sessionRef.current?.transport as any;
-            // GA Realtime: turn_detection lives under session.audio.input,
-            // not at session root. Setting create_response: false tells the
-            // server to stop auto-creating responses on incoming audio →
-            // the agent says "Listo" once and stays silent until close.
-            transport?.sendEvent?.({
-              type: "session.update",
-              session: {
-                type: "realtime",
-                audio: {
-                  input: {
-                    turn_detection: {
-                      type: "semantic_vad",
-                      create_response: false,
-                      interrupt_response: false,
-                    },
-                  },
-                },
+        tools: buildTools({
+          onHandoffStart: () => {
+            // Marcar handoff activo + cortar cualquier audio en vuelo del
+            // agente. response.cancel termina la respuesta actual; cualquier
+            // intento futuro tampoco arranca porque cerramos la sesión en
+            // onHandoffDone. Mute defensivo del mic para que el VAD no
+            // dispare nuevas respuestas mientras esperamos el backend.
+            handoffActiveRef.current = true;
+            setStatus("thinking");
+            setThinkingLabel("Generando protocolo… (15-30 segundos)");
+            setMicEnabled(false);
+            try {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const transport = sessionRef.current?.transport as any;
+              transport?.sendEvent?.({ type: "response.cancel" });
+            } catch (err) {
+              console.warn("[voice] response.cancel failed:", err);
+            }
+          },
+          onHandoff: onProtocolGenerated,
+          onHandoffDone: (closingMessage) => {
+            // Inyecta el mensaje sintético como turno assistant en el
+            // transcript LOCAL. NO va por el SDK (que llamaría al agente
+            // a hablarlo) — es texto puro que el doctor lee al volver al
+            // PWA tras cerrar la pestaña del PDF.
+            setTranscript((prev) => [
+              ...prev,
+              {
+                id: `synthetic-${Date.now()}`,
+                role: "assistant",
+                text: closingMessage,
               },
-            });
-          } catch (err) {
-            console.warn("[voice] could not disable auto-response:", err);
-          }
-
-          // Marca "post-handoff": el listener de audio_stopped cierra la
-          // sesión 1.2s después de que el agente termine de hablar su frase
-          // "Listo…", lo que en práctica evita el bug de los Listos repetidos.
-          postHandoffRef.current = true;
-
-          // Mute defensivo: el mic se queda apagado por el resto de la
-          // sesión post-handoff. Junto con create_response:false esto
-          // garantiza que NO se pueda crear una respuesta nueva (sin mic
-          // no hay VAD trigger).
-          setMicEnabled(false);
-
-          // Backstop: si por alguna razón no llega audio_stopped, cierra
-          // a los 6s. Bajado de 8s porque ahora con mic muted y
-          // create_response:false el riesgo de "Listo repetido" es nulo
-          // — solo necesitamos esperar la frase actual del modelo.
-          if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
-          closeTimerRef.current = setTimeout(() => {
+            ]);
+            // Cierra sesión inmediatamente. No esperamos audio_stopped, no
+            // damos chance al agente de "repetir Listo" — la sesión se
+            // muere aquí y los botones del action card (que ya viven en
+            // bottomActionCard porque pendingProtocol está seteado) son
+            // la única interacción posible. Para nuevos cambios, el doctor
+            // toca el mic otra vez → startVoice nueva.
             cleanup();
             setStatus("idle");
-          }, 6000);
+          },
         }),
         // "marin" and "cedar" are the highest-quality voices per OpenAI's
         // gpt-realtime-2 guide. Marin is warm/neutral, good for Spanish.
@@ -790,34 +797,21 @@ export default function VoiceAgent({
       });
       session.on("audio_stopped", () => {
         console.log("[voice] audio_stopped → listening (unmuting mic)");
+        // Si el handoff está activo, NO volvemos a listening — el status
+        // se queda en "thinking" hasta que onHandoffDone cierre la sesión.
+        if (handoffActiveRef.current) return;
         setStatus("listening");
-        // Reset amplitude so bars fall back to baseline immediately
         aiAmpRef.current = 0;
-
-        // Si veníamos de un handoff exitoso, este audio_stopped es el
-        // final de la frase "Listo, aquí tienes el protocolo…". Cierra
-        // sesión en 1.2s. NO re-habilitamos el mic — la sesión se cierra
-        // y el doctor inicia una nueva con un tap fresco si quiere cambios.
-        if (postHandoffRef.current) {
-          postHandoffRef.current = false;
-          if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
-          closeTimerRef.current = setTimeout(() => {
-            cleanup();
-            setStatus("idle");
-          }, 1200);
-          return;
-        }
-
-        // Re-habilita el mic para que el doctor pueda responder/seguir.
         setMicEnabled(true);
       });
       session.on("audio_interrupted", () => {
+        // El SDK interrumpió a la IA mid-speech (barge-in o nuestro
+        // response.cancel del handoff). Si NO estamos en handoff, volvemos
+        // a listening y re-habilitamos el mic.
+        if (handoffActiveRef.current) return;
         setStatus("listening");
         aiAmpRef.current = 0;
-        // El SDK interrumpió a la IA mid-speech (barge-in). Asegurarnos
-        // de re-habilitar el mic (puede haber quedado disabled del
-        // audio_start si el interrupt llegó antes del audio_stopped).
-        if (!postHandoffRef.current) setMicEnabled(true);
+        setMicEnabled(true);
       });
 
       // PCM amplitude of each AI audio chunk → feeds the Waveform.
@@ -836,11 +830,10 @@ export default function VoiceAgent({
       });
       session.on("agent_tool_start", (_ctx, _agent, tl) => {
         console.log(`[voice] tool start: ${tl.name}`);
-        if (tl.name === "handoff_to_reasoning") {
-          setThinkingLabel("Generando protocolo… (puede tardar hasta 1 minuto)");
-        } else {
-          setThinkingLabel("Consultando catálogo…");
-        }
+        // handoff_to_reasoning ya pone su propio label en onHandoffStart
+        // — no lo pisamos aquí. Para tools rápidas mostramos "Consultando".
+        if (tl.name === "handoff_to_reasoning") return;
+        setThinkingLabel("Consultando catálogo…");
         setStatus("thinking");
       });
       session.on("agent_tool_end", (_ctx, _agent, tl) => {
@@ -849,6 +842,11 @@ export default function VoiceAgent({
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       session.on("history_updated", (history: any[]) => {
+        // Si el handoff ya terminó (sesión cerrada o cerrándose), NO
+        // pisamos el transcript — onHandoffDone ya agregó el mensaje
+        // sintético "Listo…" y un history_updated tardío del SDK lo
+        // borraría. Es una race condition común con close() async.
+        if (handoffActiveRef.current) return;
         // Convert SDK history items into chat-style transcript entries
         const entries: TranscriptEntry[] = [];
         for (const item of history) {
@@ -1034,25 +1032,46 @@ export default function VoiceAgent({
               El orb + mic + status arriba son flex-shrink-0 (nunca se
               comprimen); el transcript fluye dentro del espacio restante. */}
           <div className="space-y-3">
-            {transcript.map((entry) => (
-              <div key={entry.id} className={`flex ${entry.role === "user" ? "justify-end" : "justify-start"}`}>
-                <div
-                  className={`max-w-xs md:max-w-md rounded-2xl px-3.5 py-2 text-sm leading-snug ${
-                    entry.role === "user"
-                      ? "bg-amber-500 text-white rounded-br-sm"
-                      : "bg-stone-100 text-stone-800 rounded-bl-sm"
-                  }`}
-                >
-                  {entry.text}
-                </div>
-              </div>
-            ))}
-            {/* Card de acciones para el último output del agente — viene
-                desde ChatPage según pendingProtocol/savedSnapshot. Se ve
-                como parte del flujo conversacional, no como toolbar. */}
-            {bottomActionCard && (
-              <div className="pt-2 border-t border-stone-100">{bottomActionCard}</div>
-            )}
+            {(() => {
+              // Localiza el índice del último mensaje assistant — el action
+              // card (vista previa / descargar / guardar / compartir) se
+              // ancla DENTRO de ese mismo bubble para que se sienta como
+              // parte del último output del agente, no como toolbar.
+              let lastAssistantIdx = -1;
+              for (let i = transcript.length - 1; i >= 0; i--) {
+                if (transcript[i].role === "assistant") {
+                  lastAssistantIdx = i;
+                  break;
+                }
+              }
+              return transcript.map((entry, i) => {
+                const isLastAssistant = i === lastAssistantIdx;
+                const showCard = isLastAssistant && bottomActionCard;
+                return (
+                  <div
+                    key={entry.id}
+                    className={`flex ${entry.role === "user" ? "justify-end" : "justify-start"}`}
+                  >
+                    <div
+                      className={`${
+                        showCard ? "max-w-sm md:max-w-md" : "max-w-xs md:max-w-md"
+                      } rounded-2xl px-3.5 py-2 text-sm leading-snug ${
+                        entry.role === "user"
+                          ? "bg-amber-500 text-white rounded-br-sm"
+                          : "bg-stone-100 text-stone-800 rounded-bl-sm"
+                      }`}
+                    >
+                      <div>{entry.text}</div>
+                      {showCard && (
+                        <div className="mt-2 pt-2 border-t border-stone-200/60">
+                          {bottomActionCard}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              });
+            })()}
             <div ref={transcriptBottomRef} />
           </div>
         </div>
