@@ -16,6 +16,18 @@ const WEEKDAYS_EN = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Fr
 
 const APP_TIMEZONE = process.env.APP_TIMEZONE || "America/Mexico_City";
 
+// Tipo de cambio MXN/USD para cotizaciones en USD. El catálogo está
+// en MXN; cuando el doctor pide USD el modelo PUSO antes el factor
+// inline en el prompt (= 18 hardcoded) y dividía a mano — quedaba
+// congelado y para 2026 ya no refleja la realidad. Ahora vive en env
+// y se aplica server-side aquí (igual de fiable que la fecha).
+//
+// Doctor puede actualizar PEPTIDES_MXN_PER_USD en Vercel sin redeploy
+// de código. Default 18.5 (referencial mediados 2026); usar el rate
+// del banco más reciente si quiere precisión real.
+const MXN_PER_USD =
+  Number(process.env.PEPTIDES_MXN_PER_USD || "18.5") || 18.5;
+
 interface CalDate {
   year: number;
   month: number; // 1-12
@@ -130,6 +142,36 @@ export function enrichProtocolMetadata(
     tryParseCalDate(protocol.metadata.fecha_revision) ??
     addMonthsCal(inicio, durMeses);
   protocol.metadata.fecha_revision = formatDateWithWeekday(revision, idioma);
+
+  // ── MXN → USD: si el doctor pidió USD, convertimos AQUÍ los precios
+  //    que el modelo dejó en MXN. El prompt obliga al modelo a NO
+  //    convertir (regla 6). Esto garantiza un FX consistente, controlado
+  //    via env, sin congelar nada en el código del modelo.
+  if (protocol.cotizacion?.moneda === "USD" && MXN_PER_USD > 0) {
+    const toUsd = (mxn: number) =>
+      Math.round((mxn / MXN_PER_USD) * 100) / 100;
+    if (Array.isArray(protocol.cotizacion.productos)) {
+      protocol.cotizacion.productos = protocol.cotizacion.productos.map((p) => ({
+        ...p,
+        precio_unitario: toUsd(Number(p.precio_unitario) || 0),
+      }));
+    }
+    if (typeof protocol.cotizacion.descuento === "number") {
+      protocol.cotizacion.descuento = toUsd(protocol.cotizacion.descuento);
+    }
+    if (typeof protocol.cotizacion.envio_monto === "number") {
+      protocol.cotizacion.envio_monto = toUsd(protocol.cotizacion.envio_monto);
+    }
+    if (typeof protocol.cotizacion.total === "number") {
+      protocol.cotizacion.total = toUsd(protocol.cotizacion.total);
+    }
+    // Nota explícita en la cotización para que el doctor sepa cuál FX se
+    // usó (auditable). Se prepende a la nota que el modelo haya escrito.
+    const fxNote = `Tipo de cambio aplicado: ${MXN_PER_USD.toFixed(2)} MXN/USD. Confirmar al cobrar.`;
+    protocol.cotizacion.nota = protocol.cotizacion.nota
+      ? `${fxNote} ${protocol.cotizacion.nota}`
+      : fxNote;
+  }
 
   return protocol;
 }
