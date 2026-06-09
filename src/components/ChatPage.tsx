@@ -90,6 +90,13 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
     datos_json: ProtocoloData;
     folio: string;
     driveUrl: string | null;
+    // ID del row en Supabase. Cuando el doctor edita un protocolo
+    // cargado del historial y vuelve a guardar, mandamos este ID como
+    // originId para que /api/pdf haga UPDATE en sitio (mismo folio,
+    // mismo row) en vez de INSERT con folio nuevo (= duplicación de
+    // historial clínico). null para drafts nuevos que aún no se han
+    // guardado.
+    originId: string | null;
   } | null>(null);
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
@@ -482,6 +489,11 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
           : persistedFromMessages(messages);
       const conversacion_modo = mode;
 
+      // originId: si el doctor cargó un protocolo del historial Y NO lo
+      // editó tanto que invalidó el snapshot, mandamos el id original
+      // para que el server haga UPDATE en sitio en vez de INSERT con
+      // folio nuevo. Sin esto el historial se duplicaba en cada save.
+      const originId = savedSnapshot?.originId ?? null;
       const res = await fetch("/api/pdf", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -489,6 +501,7 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
           protocolData: pendingProtocol,
           conversacion,
           conversacion_modo,
+          ...(originId ? { originId } : {}),
         }),
       });
 
@@ -525,11 +538,16 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
 
       if (saveStatus === "ok") {
         showToast("ok", { folio, driveUrl });
-        // El protocolo SÍ se archivó → flip a estado "archivado"
+        // El protocolo SÍ se archivó → flip a estado "archivado".
+        // El originId que pasamos arriba (savedSnapshot?.originId) ahora
+        // queda como el row de este protocolo — la próxima edición hará
+        // UPDATE en el mismo lugar. Si era un draft NUEVO sin originId,
+        // /api/history/[id] nos lo proveerá al re-cargar.
         setSavedSnapshot({
           datos_json: pendingProtocol,
           folio,
           driveUrl: driveUrl || null,
+          originId: originId,
         });
       } else {
         // El PDF se generó pero algo del archivado falló (Drive o Supabase).
@@ -1002,11 +1020,25 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
     runViewTransition(() => {
       setLandingShown(false);
       markSeen([item.id]);
+      // Marca datos_json como cargado del historial — el endpoint /api/chat
+      // lee este flag y le dice al modelo: 'NO reuses precios, re-valida con
+      // get_product_price'. Workflow encontró que sin esto los protocolos
+      // viejos se re-cotizaban con precios stale (paciente pagaba mal).
+      if (datos_json && typeof datos_json === "object") {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (datos_json as any)._meta = {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          ...((datos_json as any)._meta ?? {}),
+          loaded_from_history: true,
+          origin_id: item.id,
+        };
+      }
       setPendingProtocol(datos_json);
       setSavedSnapshot({
         datos_json,
         folio: folio || datos_json.cotizacion?.folio || "",
         driveUrl: drive_url ?? null,
+        originId: item.id, // → /api/pdf hará UPDATE en sitio al guardar
       });
 
       const turns = Array.isArray(conversacion) ? conversacion : [];

@@ -34,6 +34,13 @@ const PDF_REQUEST_SCHEMA = z.object({
     .optional(),
   conversacion_modo: z.enum(["text", "voice"]).optional(),
   mode: z.enum(["save", "download"]).optional(),
+  // ID del protocolo origen — cuando el doctor carga un protocolo del
+  // historial, lo edita, y toca Guardar, el cliente pasa originId aquí.
+  // Sin esto creábamos una fila nueva con folio nuevo (duplicado) y el
+  // historial del doctor terminaba con 2 versiones del mismo paciente,
+  // sin saber cuál era la vigente. Trazabilidad rota. Ahora UPDATE en
+  // sitio: mismo folio, mismo row, bump de version en metadata.
+  originId: z.string().uuid().optional(),
 });
 
 // Vercel: dame hasta 60s. Puppeteer+Drive+Supabase encadenados sobrepasan
@@ -112,7 +119,7 @@ export async function POST(req: Request) {
   // El cast es seguro: zod ya validó la forma mínima. Los campos extra de
   // ProtocoloData están en passthrough, así que están presentes en runtime.
   const protocolData = parsed.data.protocolData as unknown as ProtocoloData;
-  const { conversacion, conversacion_modo, mode } = parsed.data;
+  const { conversacion, conversacion_modo, mode, originId } = parsed.data;
   const downloadOnly = mode === "download";
 
   // ── 0. Enrich metadata server-side (today's date, doctor email) ──
@@ -123,12 +130,43 @@ export async function POST(req: Request) {
 
   const supabase = createAdminClient();
 
-  // ── 1. Folio: download mode reuses the one already stamped on the protocol;
-  //         save mode reserves a fresh one from the Postgres sequence. ──
+  // ── 1. Folio: 3 caminos ──
+  //   a) downloadOnly: reusa el folio que ya está en el protocolo (re-download).
+  //   b) save + originId: REUSA el folio del protocolo original (es una
+  //      edición de un protocolo existente, no uno nuevo). UPDATE en la
+  //      misma fila al final → trazabilidad clínica preservada.
+  //   c) save sin originId: nuevo folio del Postgres sequence (caso normal
+  //      del primer guardado de un draft).
   let folio: string;
+  let isEditOfExisting = false;
   if (downloadOnly) {
     folio = protocolData.cotizacion?.folio || `P4A-TMP-${Date.now()}`;
     console.log(`[pdf] download mode: reusing folio ${folio}`);
+  } else if (originId) {
+    // Edición de protocolo existente — recuperamos folio + drive_url del row
+    // original. Sin esto, el doctor cargaba un protocolo viejo, lo editaba,
+    // tocaba Guardar y la app generaba un folio NUEVO + INSERT segundo row.
+    const { data: origin, error: originErr } = await supabase
+      .from("protocolos")
+      .select("folio, creado_por")
+      .eq("id", originId)
+      .maybeSingle();
+    if (originErr || !origin) {
+      console.warn(`[pdf] originId=${originId} not found, falling back to new folio`);
+      const { data: folioData } = await supabase.rpc("next_protocol_folio");
+      folio = typeof folioData === "string" ? folioData : `P4A-TMP-${Date.now()}`;
+      protocolData.cotizacion.folio = folio;
+    } else if (origin.creado_por !== session.id) {
+      // Defense in depth: doctor solo puede editar SUS protocolos. Sin
+      // esto, un cliente comprometido podría sobrescribir el row de otro.
+      console.warn(`[pdf] originId=${originId} belongs to other doctor — denied`);
+      return new Response("Forbidden: not your protocol", { status: 403 });
+    } else {
+      folio = origin.folio;
+      isEditOfExisting = true;
+      protocolData.cotizacion.folio = folio;
+      console.log(`[pdf] edit mode: reusing folio ${folio} from origin id=${originId}`);
+    }
   } else {
     const { data: folioData, error: folioErr } = await supabase.rpc("next_protocol_folio");
     if (folioErr) {
@@ -258,34 +296,59 @@ export async function POST(req: Request) {
     console.log("[pdf] Drive not configured — skipping upload");
   }
 
-  // ── 5. Save index row in Supabase (with folio) ──
-  const row = {
+  // ── 5. Save row en Supabase. Si es edición de protocolo existente
+  //       (originId resuelto a un row del mismo doctor), UPDATE en sitio
+  //       en vez de INSERT. Mismo folio, mismo row, history-friendly.
+  const baseRow = {
     folio,
-    creado_por: session.id,
     paciente_nombre: protocolData.paciente.nombre,
     descripcion: `${protocolData.protocolo.titulo} — ${protocolData.metadata.fecha}`,
     datos_json: protocolData,
     drive_url: driveUrl,
     conversacion: Array.isArray(conversacion) ? conversacion : [],
     conversacion_modo: conversacion_modo === "voice" ? "voice" : "text",
-    fecha_creacion: new Date().toISOString(),
   };
 
-  console.log(
-    `[pdf] inserting row: folio="${folio}" creado_por="${row.creado_por}" ` +
-      `paciente="${row.paciente_nombre}" drive_url=${row.drive_url ? "set" : "null"}`
-  );
+  let inserted: { id: unknown } | null = null;
+  let insertError: { message: string } | null = null;
 
-  const { data: inserted, error: insertError } = await supabase
-    .from("protocolos")
-    .insert(row)
-    .select("id")
-    .maybeSingle();
+  if (isEditOfExisting && originId) {
+    const { data, error } = await supabase
+      .from("protocolos")
+      .update({
+        ...baseRow,
+        // NO sobrescribimos creado_por ni fecha_creacion — preservamos
+        // la auditoría del primer guardado. Agregamos fecha_modificacion
+        // si la columna existe (graceful — si no, lo ignora).
+        fecha_modificacion: new Date().toISOString(),
+      })
+      .eq("id", originId)
+      .eq("creado_por", session.id)
+      .select("id")
+      .maybeSingle();
+    inserted = data;
+    insertError = error;
+    if (!error) console.log(`[pdf] UPDATED existing protocol id=${originId} folio=${folio}`);
+  } else {
+    const row = {
+      ...baseRow,
+      creado_por: session.id,
+      fecha_creacion: new Date().toISOString(),
+    };
+    console.log(`[pdf] inserting new row: folio="${folio}" creado_por=${session.id}`);
+    const { data, error } = await supabase
+      .from("protocolos")
+      .insert(row)
+      .select("id")
+      .maybeSingle();
+    inserted = data;
+    insertError = error;
+  }
 
   if (insertError) {
     console.error(
-      `[pdf] Supabase insert FAILED — folio=${folio} drive_url=${driveUrl ?? "null"} ` +
-        `paciente="${protocolData.paciente.nombre}". MANUAL_RECONCILIATION_NEEDED. Error:`,
+      `[pdf] Supabase save FAILED — folio=${folio} drive_url=${driveUrl ?? "null"}. ` +
+        `MANUAL_RECONCILIATION_NEEDED. Error:`,
       JSON.stringify(insertError, null, 2)
     );
     saveErrors.push(`Supabase: ${insertError.message}`);

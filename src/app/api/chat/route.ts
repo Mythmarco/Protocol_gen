@@ -67,11 +67,27 @@ export async function POST(req: Request) {
     const isLastUser =
       i === body.messages.length - 1 && m.role === "user" && body.currentDraft;
     if (isLastUser) {
+      // Si el draft viene del historial, agregamos un warning explícito
+      // para que el modelo SEPA que tiene que re-validar precios contra
+      // get_product_price. Sin esto el system-prompt decía "reusa TODO
+      // incluyendo precios" y los protocolos viejos se re-cotizaban con
+      // precios stale — paciente pagaba lo que decía el PDF (mismatch
+      // real con catálogo actualizado). Workflow lo flagged como must-fix.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const meta = (body.currentDraft as any)?._meta;
+      const fromHistory = meta?.loaded_from_history === true;
+      const histWarning = fromHistory
+        ? `\n\n### ⚠️ ESTE DRAFT VIENE DEL HISTORIAL (precios potencialmente stale)\n` +
+          `Antes de finalizar, RE-VALIDA cada precio con get_product_price para cada producto en cotizacion.productos. ` +
+          `NO reuses los precio_unitario del draft sin verificar. Si un precio cambió, actualízalo. ` +
+          `Si un producto ya no está en el catálogo, sigue las reglas 3/4/5 de PRECIOS — REGLAS DURAS.\n`
+        : "";
       return {
         role: m.role,
         content:
-          `### CURRENT_DRAFT\n\`\`\`json\n${JSON.stringify(body.currentDraft)}\n\`\`\`\n\n` +
-          `### MENSAJE DEL MÉDICO\n${m.content}`,
+          `### CURRENT_DRAFT\n\`\`\`json\n${JSON.stringify(body.currentDraft)}\n\`\`\`\n` +
+          histWarning +
+          `\n### MENSAJE DEL MÉDICO\n${m.content}`,
       };
     }
     return { role: m.role, content: m.content };
