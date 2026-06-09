@@ -59,7 +59,11 @@ export async function POST(req: Request) {
 
   const data = (await res.json()) as { text?: string };
   const text = (data.text ?? "").trim();
-  console.log(`[transcribe] ${ms}ms, ${text.length} chars: "${text.slice(0, 80)}${text.length > 80 ? "…" : ""}"`);
+  // NO loggeamos el contenido del transcript — incluye PHI (nombre,
+  // edad, condición del paciente). Antes loggeábamos primeros 80 chars
+  // y eso era data leak (workflow lo flagged como must-fix). Solo
+  // métricas no-sensibles: latencia y tamaño.
+  console.log(`[transcribe] ${ms}ms, len=${text.length}`);
 
   return Response.json({ text });
 }

@@ -5,6 +5,7 @@ import { executePriceTool } from "@/lib/price-tool";
 import { executeMemoryTool } from "@/lib/memory-tool";
 import { OPENAI_RESPONSES_TOOLS } from "@/lib/openai-tools";
 import { enrichProtocolMetadata } from "@/lib/metadata-enricher";
+import { patientHash } from "@/lib/safe-log";
 import type { ProtocoloData } from "@/lib/protocol-types";
 
 // Voice-to-reasoning handoff. Called by the Realtime voice agent's
@@ -208,7 +209,10 @@ LLAMA finalize_protocol con el JSON completo. No respondas con texto suelto.`;
           name: session.name ?? "",
           email: session.email,
         });
-        console.log(`[generate-protocol] finalized for ${finalProtocol.paciente?.nombre}`);
+        // No loggeamos el nombre del paciente — hash en su lugar para
+        // que Marco pueda correlacionar logs sin que Vercel se convierta
+        // en un PHI store (LFPDPPP/HIPAA-equivalent).
+        console.log(`[generate-protocol] finalized ${patientHash(finalProtocol.paciente?.nombre)}`);
       } catch (err) {
         console.error("[generate-protocol] finalize parse failed:", err);
       }

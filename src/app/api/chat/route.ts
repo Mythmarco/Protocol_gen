@@ -5,6 +5,7 @@ import { OPENAI_RESPONSES_TOOLS } from "@/lib/openai-tools";
 import { executePeptideTool, executeListPeptidesTool } from "@/lib/peptide-tool";
 import { executePriceTool } from "@/lib/price-tool";
 import { executeMemoryTool } from "@/lib/memory-tool";
+import { patientHash } from "@/lib/safe-log";
 import { PROTOCOL_JSON_MARKER, type ProtocoloData } from "@/lib/protocol-types";
 
 // Text mode using OpenAI Responses API + GPT-5.5 + Structured Outputs.
@@ -165,7 +166,7 @@ export async function POST(req: Request) {
                   `\n\n${PROTOCOL_JSON_MARKER}\n${JSON.stringify(protocolData)}\n${PROTOCOL_JSON_MARKER}`
                 )
               );
-              console.log(`[chat] finalize_protocol OK for ${protocolData.paciente?.nombre}`);
+              console.log(`[chat] finalize_protocol OK ${patientHash(protocolData.paciente?.nombre)}`);
             } catch (err) {
               console.error("[chat] finalize_protocol args parse failed:", err);
             }
