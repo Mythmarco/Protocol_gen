@@ -39,6 +39,12 @@ export async function POST() {
         type: "realtime",
         model: REALTIME_MODEL,
         output_modalities: ["audio"],
+        // Permite al agente emitir varias tool calls en el mismo turno
+        // — ej. get_peptide_info de 3 péptidos a la vez. Sin esto el
+        // SDK las serializa y la conversación se vuelve laggy cuando el
+        // doctor menciona múltiples productos juntos. Recomendado por
+        // OpenAI específicamente para gpt-realtime-2.
+        parallel_tool_calls: true,
         audio: {
           input: {
             format: { type: "audio/pcm", rate: 24000 },
