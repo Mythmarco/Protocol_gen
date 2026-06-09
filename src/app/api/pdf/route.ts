@@ -4,6 +4,7 @@ import { buildProtocolHTML } from "@/lib/protocol-template";
 import { ProtocoloData } from "@/lib/protocol-types";
 import { uploadPDFToDrive, isDriveConfigured } from "@/lib/drive";
 import { enrichProtocolMetadata } from "@/lib/metadata-enricher";
+import { escapeHTML } from "@/lib/html-escape";
 import puppeteer, { type Browser, type Page } from "puppeteer-core";
 import chromium from "@sparticuz/chromium-min";
 import { z } from "zod";
@@ -168,8 +169,8 @@ export async function POST(req: Request) {
     await page.evaluate(() => document.fonts.ready);
 
     // Sanitize header values to safe text en el header template HTML.
-    const escapeHTML = (s: string) =>
-      s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    // Compartido con el template del body (src/lib/html-escape.ts) para
+    // garantizar consistencia y evitar duplicación.
     const headerFolio = escapeHTML(folio);
     const headerPaciente = escapeHTML(protocolData.paciente.nombre);
 

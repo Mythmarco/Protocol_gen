@@ -1,6 +1,7 @@
 import { ProtocoloData } from "./protocol-types";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { escapeHTML as esc } from "./html-escape";
 
 // Embed brand assets as base64 data URIs so the PDF is self-contained,
 // regardless of where Puppeteer runs (local dev, Vercel, etc.).
@@ -137,18 +138,18 @@ export function buildProtocolHTML(data: ProtocoloData, options: BuildOptions = {
   const syringeURI = getSyringeDataURI();
   const doctorAttribution = options.doctor
     ? (metadata.idioma === "en" ? "Issued by" : "Atendido por") +
-      ` <strong>${options.doctor.name || options.doctor.email.split("@")[0]}</strong>`
+      ` <strong>${esc(options.doctor.name || options.doctor.email.split("@")[0])}</strong>`
     : "";
 
   const peptidoRows = protocolo.peptidos
     .map(
       (p) => `
     <tr>
-      <td><strong>${p.nombre}</strong></td>
-      <td>${p.dosis}</td>
-      <td>${p.unidades}</td>
-      <td>${p.frecuencia}</td>
-      <td>${p.ciclo}</td>
+      <td><strong>${esc(p.nombre)}</strong></td>
+      <td>${esc(p.dosis)}</td>
+      <td>${esc(p.unidades)}</td>
+      <td>${esc(p.frecuencia)}</td>
+      <td>${esc(p.ciclo)}</td>
     </tr>`
     )
     .join("");
@@ -157,8 +158,8 @@ export function buildProtocolHTML(data: ProtocoloData, options: BuildOptions = {
   const calendarRows = protocolo.calendario
     .map((entry) => `
     <tr>
-      <td>${entry.peptido_label}</td>
-      ${DIAS_KEYS.map((d) => `<td>${entry[d] ?? "—"}</td>`).join("")}
+      <td>${esc(entry.peptido_label)}</td>
+      ${DIAS_KEYS.map((d) => `<td>${esc(entry[d] ?? "—")}</td>`).join("")}
     </tr>`)
     .join("");
 
@@ -182,19 +183,19 @@ export function buildProtocolHTML(data: ProtocoloData, options: BuildOptions = {
     })}`;
 
   const indicacionesItems = protocolo.indicaciones_generales
-    .map((i) => `<li>${i}</li>`)
+    .map((i) => `<li>${esc(i)}</li>`)
     .join("");
 
   const stackItems = protocolo.explicacion_stack
-    .map((i) => `<li>${i}</li>`)
+    .map((i) => `<li>${esc(i)}</li>`)
     .join("");
 
   const cotizacionRows = cotizacion.productos
     .map(
       (p) => `
     <tr>
-      <td>${p.nombre}</td>
-      <td>${p.qty}</td>
+      <td>${esc(p.nombre)}</td>
+      <td>${esc(p.qty)}</td>
       <td>${money(p.precio_unitario)}</td>
       <td>${money(p.precio_unitario * p.qty)}</td>
     </tr>`
@@ -246,7 +247,7 @@ export function buildProtocolHTML(data: ProtocoloData, options: BuildOptions = {
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@500;700;800&display=swap" rel="stylesheet">
-  <title>${paciente.nombre} | Peptides4ALL</title>
+  <title>${esc(paciente.nombre)} | Peptides4ALL</title>
   <style>
     :root{--brand-dark:#504d4d;--brand-gold:#f2b056;--brand-gold-deep:#d9943f;--brand-gold-light:#f8d9a0;--brand-silver:#b2b0ae;--brand-warm-gray:#d7d5d3;--brand-off-white:#f8f7f6;--ink:#2f2d2d;--muted:#6b6868;--ok:#0f766e;--warning:#9a3412}
     *{box-sizing:border-box}
@@ -359,20 +360,20 @@ export function buildProtocolHTML(data: ProtocoloData, options: BuildOptions = {
         </div>
         <div class="doc-meta">
           <div><strong>${L.version}:</strong> ${metadata.version}</div>
-          <div><strong>${L.start}:</strong> ${metadata.fecha_inicio}</div>
-          <div><strong>${L.nextReview}:</strong> ${metadata.fecha_revision}</div>
+          <div><strong>${L.start}:</strong> ${esc(metadata.fecha_inicio)}</div>
+          <div><strong>${L.nextReview}:</strong> ${esc(metadata.fecha_revision)}</div>
         </div>
       </header>
 
       <section class="section">
         <h2 class="section-title">${L.patientData}</h2>
         <div class="card patient-grid">
-          <div class="field"><div class="label">${L.name}</div><div class="value">${paciente.nombre}</div></div>
-          <div class="field"><div class="label">${L.weight}</div><div class="value">${paciente.peso}</div></div>
-          <div class="field"><div class="label">${L.height}</div><div class="value">${paciente.estatura}</div></div>
-          <div class="field"><div class="label">${L.age}</div><div class="value">${paciente.edad}</div></div>
+          <div class="field"><div class="label">${L.name}</div><div class="value">${esc(paciente.nombre)}</div></div>
+          <div class="field"><div class="label">${L.weight}</div><div class="value">${esc(paciente.peso)}</div></div>
+          <div class="field"><div class="label">${L.height}</div><div class="value">${esc(paciente.estatura)}</div></div>
+          <div class="field"><div class="label">${L.age}</div><div class="value">${esc(paciente.edad)}</div></div>
         </div>
-        <p class="small-note"><strong>${L.objective}:</strong> ${paciente.objetivo}</p>
+        <p class="small-note"><strong>${L.objective}:</strong> ${esc(paciente.objetivo)}</p>
       </section>
 
       <section class="section">
@@ -405,7 +406,7 @@ export function buildProtocolHTML(data: ProtocoloData, options: BuildOptions = {
               <tbody>${calendarRows}</tbody>
             </table>
           </div>
-          <p class="small-note">${protocolo.nota_calendario}</p>
+          <p class="small-note">${esc(protocolo.nota_calendario)}</p>
         </div>
       </section>
     </div>
@@ -464,18 +465,18 @@ export function buildProtocolHTML(data: ProtocoloData, options: BuildOptions = {
         <div class="doc-meta">
           <div><strong>${L.version}:</strong> ${metadata.version}</div>
           <div><strong>${L.quoteDate}:</strong> ${fechaDisplay}</div>
-          <div><strong>${L.client}:</strong> ${paciente.nombre}</div>
+          <div><strong>${L.client}:</strong> ${esc(paciente.nombre)}</div>
         </div>
       </header>
 
       <section class="section">
-        <h2 class="section-title">${cotizacion.descripcion}</h2>
+        <h2 class="section-title">${esc(cotizacion.descripcion)}</h2>
         <div class="card">
           <div class="quote-meta-grid">
-            <div class="field"><div class="label">${L.folio}</div><div class="value">${cotizacion.folio ?? L.toBeAssigned}</div></div>
-            <div class="field"><div class="label">${L.date}</div><div class="value">${fechaDisplay}</div></div>
-            <div class="field"><div class="label">${L.client}</div><div class="value">${paciente.nombre}</div></div>
-            <div class="field"><div class="label">${L.description}</div><div class="value">${cotizacion.descripcion}</div></div>
+            <div class="field"><div class="label">${L.folio}</div><div class="value">${esc(cotizacion.folio ?? L.toBeAssigned)}</div></div>
+            <div class="field"><div class="label">${L.date}</div><div class="value">${esc(fechaDisplay)}</div></div>
+            <div class="field"><div class="label">${L.client}</div><div class="value">${esc(paciente.nombre)}</div></div>
+            <div class="field"><div class="label">${L.description}</div><div class="value">${esc(cotizacion.descripcion)}</div></div>
           </div>
           <div class="section">
             <div class="table-wrap">
@@ -493,7 +494,7 @@ export function buildProtocolHTML(data: ProtocoloData, options: BuildOptions = {
               ${discountLine}
               ${totalLine}
             </div>
-            <p class="small-note">${cotizacion.nota}</p>
+            <p class="small-note">${esc(cotizacion.nota)}</p>
           </div>
         </div>
       </section>
