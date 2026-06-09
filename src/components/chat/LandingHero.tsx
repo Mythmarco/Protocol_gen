@@ -1,11 +1,7 @@
 "use client";
 
 import AIOrb from "../AIOrb";
-
-const QUICK_STARTS = [
-  "Paciente Diego de la Garza, 87 kg, 1.76 m, 37 años, mes 2 pérdida de peso visceral",
-  "Nuevo protocolo mes 1 para Ana López, 68 kg, 1.65 m, 42 años, energía y recuperación",
-];
+import { EMPTY_TEMPLATE, EXAMPLE_TEMPLATES } from "@/lib/quick-templates";
 
 interface Props {
   doctorFirstName: string;
@@ -112,22 +108,45 @@ export default function LandingHero({ doctorFirstName, onPick, onQuickStart }: P
           </button>
         </div>
 
-        {/* Quick-start chips — discreet, only relevant to text mode but
-            tapping any of them implicitly picks text. */}
+        {/* Quick-start chips — el LABEL es un resumen corto; al tap se
+            inyecta el TEMPLATE COMPLETO en el textarea. Doctor edita 4-5
+            campos y la IA finaliza en 1-2 turnos (vs 4-5 antes pidiendo
+            campo por campo). El botón "Plantilla rápida" inyecta una
+            plantilla VACÍA con los placeholders para casos donde el
+            doctor quiere armar desde cero. */}
         <div className="mt-10 w-full max-w-3xl">
           <p className="text-xs uppercase tracking-wider text-stone-400 mb-3 text-center">
             O empieza con un ejemplo
           </p>
           <div className="flex flex-col sm:flex-row gap-2">
-            {QUICK_STARTS.map((q) => (
+            {EXAMPLE_TEMPLATES.map((t) => (
               <button
-                key={q}
-                onClick={() => onQuickStart(q)}
+                key={t.label}
+                onClick={() => onQuickStart(t.fullText)}
                 className="flex-1 text-left text-xs text-stone-600 bg-white/70 backdrop-blur-sm border border-stone-200 hover:border-amber-300 hover:text-stone-800 rounded-xl px-3.5 py-2.5 transition-all"
+                title="Carga este ejemplo completo en el chat"
               >
-                {q}
+                <span className="font-medium text-stone-700">{t.label}</span>
+                <span className="block text-[10px] text-stone-400 mt-0.5">
+                  Plantilla completa lista para enviar
+                </span>
               </button>
             ))}
+          </div>
+          <div className="mt-3 flex justify-center">
+            <button
+              onClick={() => onQuickStart(EMPTY_TEMPLATE)}
+              className="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 hover:bg-amber-100 hover:border-amber-300 rounded-full px-3.5 py-1.5 transition-all"
+              title="Inserta una plantilla vacía con todos los campos para que la llenes"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                <polyline points="14 2 14 8 20 8"/>
+                <line x1="9" y1="13" x2="15" y2="13"/>
+                <line x1="9" y1="17" x2="15" y2="17"/>
+              </svg>
+              Plantilla rápida (en blanco)
+            </button>
           </div>
         </div>
       </div>

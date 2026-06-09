@@ -11,6 +11,7 @@ import MobileHistoryScreen from "./chat/MobileHistoryScreen";
 import ThinkingIndicator from "./chat/ThinkingIndicator";
 import type { HistoryItem } from "./chat/types";
 import { injectMobilePreviewCloseButton } from "@/lib/preview-overlay";
+import { EMPTY_TEMPLATE, EXAMPLE_TEMPLATES } from "@/lib/quick-templates";
 
 interface Message {
   role: "user" | "assistant";
@@ -1279,18 +1280,51 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
                 </p>
               </div>
               <div className="flex flex-col gap-2 w-full">
-                {[
-                  "Paciente Diego de la Garza, 87 kg, 1.76 m, 37 años, mes 2 pérdida de peso visceral",
-                  "Nuevo protocolo mes 1 para Ana López, 68 kg, 1.65 m, 42 años, energía y recuperación",
-                ].map((suggestion) => (
+                {EXAMPLE_TEMPLATES.map((t) => (
                   <button
-                    key={suggestion}
-                    onClick={() => setInput(suggestion)}
-                    className="text-left text-sm bg-white border border-stone-200 hover:border-amber-400 rounded-xl px-4 py-2.5 text-stone-600 hover:text-stone-800 transition-colors"
+                    key={t.label}
+                    onClick={() => {
+                      setInput(t.fullText);
+                      requestAnimationFrame(() => {
+                        const el = textareaRef.current;
+                        if (el) {
+                          el.style.height = "auto";
+                          el.style.height = Math.min(el.scrollHeight, 320) + "px";
+                          el.focus();
+                        }
+                      });
+                    }}
+                    className="text-left text-sm bg-white border border-stone-200 hover:border-amber-400 rounded-xl px-4 py-2.5 transition-colors"
                   >
-                    {suggestion}
+                    <span className="font-medium text-stone-700">{t.label}</span>
+                    <span className="block text-xs text-stone-400 mt-0.5">
+                      Plantilla completa lista para enviar
+                    </span>
                   </button>
                 ))}
+                <button
+                  onClick={() => {
+                    setInput(EMPTY_TEMPLATE);
+                    requestAnimationFrame(() => {
+                      const el = textareaRef.current;
+                      if (el) {
+                        el.style.height = "auto";
+                        el.style.height = Math.min(el.scrollHeight, 320) + "px";
+                        el.focus();
+                      }
+                    });
+                  }}
+                  className="self-center mt-1 inline-flex items-center gap-1.5 text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 hover:bg-amber-100 hover:border-amber-300 rounded-full px-3.5 py-1.5 transition-all"
+                  title="Inserta una plantilla vacía con todos los campos para que la llenes"
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                    <polyline points="14 2 14 8 20 8"/>
+                    <line x1="9" y1="13" x2="15" y2="13"/>
+                    <line x1="9" y1="17" x2="15" y2="17"/>
+                  </svg>
+                  Plantilla rápida (en blanco)
+                </button>
               </div>
             </div>
           )}
