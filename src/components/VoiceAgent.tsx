@@ -4,7 +4,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { RealtimeAgent, RealtimeSession, tool } from "@openai/agents/realtime";
 import type { ProtocoloData } from "@/lib/protocol-types";
 import { useVoiceLevels } from "@/hooks/useVoiceLevels";
-import { injectMobilePreviewCloseButton } from "@/lib/preview-overlay";
 import OrbVoice, { type OrbState } from "./OrbVoice";
 
 // OrbVoice ahora es CSS-only (sin three.js) — import directo. La versión
@@ -62,10 +61,6 @@ interface HandoffCallbacks {
 
 function buildTools(callbacks: HandoffCallbacks) {
   const { onHandoffStart, onHandoff, onHandoffDone } = callbacks;
-  // Detección de móvil — solo intentamos pre-abrir tab en móvil porque en
-  // desktop el modal es más cómodo (pinch-zoom no aplica).
-  const isMobile = () =>
-    typeof window !== "undefined" && window.innerWidth < 768;
 
   const callBridge = async (path: string, body: unknown): Promise<string> => {
     const res = await fetch(path, {
@@ -252,34 +247,21 @@ function buildTools(callbacks: HandoffCallbacks) {
         // espera es del backend, no de él.
         onHandoffStart();
 
-        // Step 1 (móvil): abrir tab placeholder SINCRÓNICAMENTE en el
-        // mismo tick en que el tool execute arranca. En iOS PWA standalone
-        // a veces funciona aunque el gesture original (tap del mic) sea
-        // viejo — es la mejor heurística que tenemos. Si el popup blocker
-        // lo rechaza, `bridgeTab` será null y mostramos modal in-app.
-        let bridgeTab: Window | null = null;
-        if (isMobile()) {
-          try {
-            bridgeTab = window.open("about:blank", "_blank");
-            if (bridgeTab) {
-              bridgeTab.document.write(
-                '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Generando protocolo…</title></head><body style="margin:0;background:#f5f3f1;font-family:-apple-system,BlinkMacSystemFont,system-ui,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;color:#666"><div style="text-align:center"><div style="font-size:42px;margin-bottom:14px">🧬</div><p style="margin:0;font-size:16px">Generando protocolo…</p><p style="margin:8px 0 0;font-size:13px;color:#999">Puede tardar hasta 1 minuto</p></div></body></html>'
-              );
-            }
-          } catch (err) {
-            console.warn("[voice] could not pre-open preview tab:", err);
-            bridgeTab = null;
-          }
-        }
+        // NOTA — antes intentábamos pre-abrir un tab vía window.open
+        // sincrónico esperando que el gesture original (tap del mic ~30s
+        // antes) le diera permiso a Safari. El workflow SOTA confirmó
+        // que en iOS PWA standalone esto falla casi siempre por el popup
+        // blocker (gesture stale). El bloque introducía complejidad sin
+        // beneficio real: doctor terminaba SIEMPRE usando el botón
+        // "Vista previa" del action card. Bloque eliminado.
 
-        // Step 2 — genera el protocolo (~15-30s con GPT-5.5 reasoning).
+        // Step 1 — genera el protocolo (~15-30s con GPT-5.5 reasoning).
         const res = await fetch("/api/generate-protocol", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ gathered }),
         });
         if (!res.ok) {
-          if (bridgeTab && !bridgeTab.closed) bridgeTab.close();
           const err = await res.json().catch(() => ({}));
           onHandoffDone(
             "Hubo un error generando el protocolo. Vuelve a intentar tocando el micrófono."
@@ -290,60 +272,18 @@ function buildTools(callbacks: HandoffCallbacks) {
         }
         const { protocol } = (await res.json()) as { protocol: ProtocoloData };
 
-        // Step 3 — renderiza HTML del preview y navega la pestaña al
-        // documento nuevo via Blob URL. Antes usábamos document.write
-        // sobre el about:blank pre-abierto, pero iOS Safari NO re-procesa
-        // el <meta viewport> cuando el doc se reescribe en vivo — se
-        // quedaba con el "width=device-width, initial-scale=1" del
-        // placeholder y el PDF (que usa width=794) salía mal alineado
-        // hasta que el doctor cerraba y abría. Navegar a un Blob URL
-        // fuerza un load completo del documento → meta viewport se lee
-        // limpio, render fit-to-width desde el primer paint.
-        let tabFilled = false;
-        if (bridgeTab && !bridgeTab.closed) {
-          try {
-            const previewRes = await fetch("/api/preview", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ protocolData: protocol }),
-            });
-            if (previewRes.ok) {
-              const html = await previewRes.text();
-              const htmlWithClose = injectMobilePreviewCloseButton(html);
-              const blob = new Blob([htmlWithClose], {
-                type: "text/html;charset=utf-8",
-              });
-              const blobUrl = URL.createObjectURL(blob);
-              // location.replace en lugar de href = evita que "atrás" en
-              // Safari mande al placeholder vacío.
-              bridgeTab.location.replace(blobUrl);
-              tabFilled = true;
-              // No revokemos el blob inmediatamente — Safari necesita el
-              // URL durante el load. Revocamos en 60s para no fugar
-              // memoria si el doctor deja el tab abierto.
-              setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
-            } else {
-              bridgeTab.close();
-            }
-          } catch (err) {
-            console.warn("[voice] preview render to bridge tab failed:", err);
-            try {
-              bridgeTab.close();
-            } catch {}
-          }
-        }
-
-        // Step 4 — entrega el protocolo a ChatPage. Esto setea
-        // pendingProtocol → bottomActionCard aparece bajo el último mensaje.
+        // Step 2 — entrega el protocolo a ChatPage. Esto setea
+        // pendingProtocol → bottomActionCard aparece bajo el último mensaje
+        // con los 4 botones (Vista previa / Descargar / Guardar / Compartir).
         onHandoff(protocol);
 
-        // Step 5 — inyecta el mensaje sintético "Listo…" en el transcript
+        // Step 3 — inyecta el mensaje sintético "Listo…" en el transcript
         // y cierra la sesión. El agente NO va a hablar este mensaje (su
         // audio ya fue cancelado en onHandoffStart y la sesión se cierra
         // aquí). Es texto puro — lo escribimos directamente en el UI.
-        const closingMessage = tabFilled
-          ? `Listo, el protocolo de ${protocol.paciente.nombre} se abrió en una pestaña nueva. Si necesitas cambios, vuelve a tocar el micrófono.`
-          : `Listo, el protocolo de ${protocol.paciente.nombre} está abajo. Si necesitas cambios, vuelve a tocar el micrófono.`;
+        // El doctor lee el mensaje al volver, toca "Vista previa" y ahí
+        // window.open SÍ funciona porque es un gesture directo del tap.
+        const closingMessage = `Listo, el protocolo de ${protocol.paciente.nombre} está abajo. Toca "Vista previa" para abrirlo en una pestaña nueva. Si necesitas cambios, vuelve a tocar el micrófono.`;
         onHandoffDone(closingMessage);
 
         // El return ya no importa para el agente (sesión cerrada) — lo
@@ -351,7 +291,6 @@ function buildTools(callbacks: HandoffCallbacks) {
         return JSON.stringify({
           ok: true,
           paciente: protocol.paciente.nombre,
-          preview_opened_in_new_tab: tabFilled,
         });
       },
     }),

@@ -65,6 +65,22 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
+  // AbortController del fetch de /api/chat en curso. Cuando el doctor
+  // toca historial / "Nueva conversación" / cambia a voice mode mientras
+  // hay un stream activo, abortamos el fetch antes de tocar el state
+  // de mensajes. Sin esto, el reader.read() seguía corriendo en
+  // background y clobbereaba el banner del protocolo cargado con turnos
+  // del chat anterior. Bug encontrado por el workflow exhaustivo.
+  const streamAbortRef = useRef<AbortController | null>(null);
+  const abortChatStream = useCallback(() => {
+    if (streamAbortRef.current) {
+      try {
+        streamAbortRef.current.abort();
+      } catch {}
+      streamAbortRef.current = null;
+    }
+    setIsStreaming(false);
+  }, []);
   const [pendingProtocol, setPendingProtocol] = useState<ProtocoloData | null>(null);
   // When the protocol on screen matches what's already archived in BD/Drive,
   // we keep a snapshot here so we can render an "Archivado" UI instead of
@@ -380,6 +396,14 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
     const assistantMsg: Message = { role: "assistant", content: "" };
     setMessages((prev) => [...prev, assistantMsg]);
 
+    // Crea un AbortController nuevo para este stream. Si el doctor
+    // navega lejos antes de que termine, abortChatStream lo dispara y
+    // todos los setMessages dentro del while loop se vuelven no-op por
+    // el guard signal.aborted abajo.
+    const ctrl = new AbortController();
+    streamAbortRef.current = ctrl;
+    const signal = ctrl.signal;
+
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
@@ -391,6 +415,7 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
           })),
           currentDraft: draftForEdit,
         }),
+        signal,
       });
 
       if (!res.ok) throw new Error("Error en la solicitud");
@@ -402,6 +427,9 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
       while (reader) {
         const { done, value } = await reader.read();
         if (done) break;
+        // Si abortChatStream se llamó, salimos sin mutar más estado —
+        // el state del chat le pertenece a otra vista ya.
+        if (signal.aborted) return;
         fullText += decoder.decode(value, { stream: true });
         setMessages((prev) => {
           const updated = [...prev];
@@ -410,6 +438,7 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
         });
       }
 
+      if (signal.aborted) return;
       const protocol = extractProtocolJSON(fullText);
       if (protocol) {
         setPendingProtocol(protocol);
@@ -417,6 +446,8 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
         openPreview(protocol, "auto");
       }
     } catch (err) {
+      // AbortError es nuestro — no es un error real, no mostramos toast.
+      if ((err as Error)?.name === "AbortError" || signal.aborted) return;
       console.error(err);
       setMessages((prev) => {
         const updated = [...prev];
@@ -427,9 +458,10 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
         return updated;
       });
     } finally {
+      if (streamAbortRef.current === ctrl) streamAbortRef.current = null;
       setIsStreaming(false);
     }
-  }, [input, isStreaming, messages]);
+  }, [input, isStreaming, messages, pendingProtocol, openPreview]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -801,6 +833,10 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
     // dejaba al usuario en un empty state mudo — parecía que no había
     // pasado nada al tocar el botón en PWA. Con la cross-fade se ve
     // claramente el reset.
+    // ANTES del cross-fade abortamos cualquier stream de chat en curso
+    // — si no, el setMessages del reader.read() seguía corriendo y
+    // metía un bubble en la pantalla limpia de la landing.
+    abortChatStream();
     runViewTransition(() => {
       setMessages([]);
       setPendingProtocol(null);
@@ -914,6 +950,11 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
   };
 
   const handleLoadHistory = async (item: HistoryItem) => {
+    // Aborta cualquier stream de /api/chat en curso. Sin esto el reader
+    // seguía empujando setMessages al fondo y clobbereaba el banner del
+    // protocolo recién cargado con turnos del chat anterior. Bug
+    // encontrado por el workflow exhaustivo.
+    abortChatStream();
     // Si veníamos de una conversación activa, bumpeamos voiceSessionKey
     // ANTES del cross-fade para que VoiceAgent se desmonte y cierre su
     // WebRTC + libere el mic. Sin esto la sesión seguía corriendo encima
