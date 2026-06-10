@@ -59,27 +59,32 @@ function makeLimiter(
   });
 }
 
+// Prefijo de app — namespace para que protocol-gen y CodexMed (u otra
+// app) puedan COMPARTIR el mismo Upstash Redis sin colisionar. Cambia
+// "p4a:" si reusas este archivo en otra app.
+const APP = "p4a:";
+
 // Signin: 5 intentos por email cada 15 min, 20 por IP cada 15 min.
 // Ratios sacados del informe del workflow SOTA — el límite por email
 // previene brute force contra una cuenta específica; el límite por IP
 // previene enumeración de cuentas o ataque distribuido desde la misma IP.
-export const signinByEmail = makeLimiter(5, "15 m", "rl:signin:email");
-export const signinByIp = makeLimiter(20, "15 m", "rl:signin:ip");
+export const signinByEmail = makeLimiter(5, "15 m", `${APP}rl:signin:email`);
+export const signinByIp = makeLimiter(20, "15 m", `${APP}rl:signin:ip`);
 
 // API calls de LLM/transcribe — protegen el budget de OpenAI.
 // 30 transcripciones por minuto / 200 por día por session — suficiente
 // para uso normal en consulta, suficientemente restrictivo para que un
 // bug o un cliente comprometido no reviente la cuenta de OpenAI.
-export const transcribePerMin = makeLimiter(30, "1 m", "rl:transcribe:min");
-export const transcribePerDay = makeLimiter(200, "1 d", "rl:transcribe:day");
+export const transcribePerMin = makeLimiter(30, "1 m", `${APP}rl:transcribe:min`);
+export const transcribePerDay = makeLimiter(200, "1 d", `${APP}rl:transcribe:day`);
 
 // Chat / generate-protocol — más conservador porque cada llamada cuesta más.
-export const llmPerMin = makeLimiter(15, "1 m", "rl:llm:min");
-export const llmPerDay = makeLimiter(150, "1 d", "rl:llm:day");
+export const llmPerMin = makeLimiter(15, "1 m", `${APP}rl:llm:min`);
+export const llmPerDay = makeLimiter(150, "1 d", `${APP}rl:llm:day`);
 
 // Realtime session creation — usuario crea sesiones a velocidad humana,
 // 10/min es generoso.
-export const realtimePerMin = makeLimiter(10, "1 m", "rl:rt:min");
+export const realtimePerMin = makeLimiter(10, "1 m", `${APP}rl:rt:min`);
 
 // Util para chequeo combinado (email + ip) — devuelve el primer fallo.
 // Permite responder con 429 + Retry-After preciso.
