@@ -82,11 +82,22 @@ export async function POST(req: Request) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const meta = (body.currentDraft as any)?._meta;
       const fromHistory = meta?.loaded_from_history === true;
+      // Si el draft viene del historial agregamos DOS warnings:
+      // 1. Re-validar precios contra catálogo (precios pueden haber cambiado)
+      // 2. Mantener consistencia clínica (mismo SKU, dosis, presentación) si
+      //    el doctor pide una continuación tipo "Mes 2 del mismo paciente".
+      //    Antes el modelo podía escoger una presentación distinta del vial
+      //    o recalcular dosis distinta porque el historial no persiste los
+      //    tool_calls de la sesión original — workflow item 3.
       const histWarning = fromHistory
-        ? `\n\n### ⚠️ ESTE DRAFT VIENE DEL HISTORIAL (precios potencialmente stale)\n` +
-          `Antes de finalizar, RE-VALIDA cada precio con get_product_price para cada producto en cotizacion.productos. ` +
+        ? `\n\n### ⚠️ ESTE DRAFT VIENE DEL HISTORIAL — DOS REGLAS CRÍTICAS:\n\n` +
+          `**1. PRECIOS POTENCIALMENTE STALE.** Antes de finalizar, RE-VALIDA cada precio con get_product_price para cada producto en cotizacion.productos. ` +
           `NO reuses los precio_unitario del draft sin verificar. Si un precio cambió, actualízalo. ` +
-          `Si un producto ya no está en el catálogo, sigue las reglas 3/4/5 de PRECIOS — REGLAS DURAS.\n`
+          `Si un producto ya no está en el catálogo, sigue las reglas 3/4/5 de PRECIOS — REGLAS DURAS.\n\n` +
+          `**2. CONSISTENCIA CLÍNICA.** Si el médico pide una continuación ("mes 2 igual", "mismo protocolo otro mes", "otra entrega"), MANTÉN sin cambiar: ` +
+          `(a) misma presentación de vial (mg) por péptido, (b) misma dosis prescrita por aplicación, (c) misma frecuencia, (d) mismo SKU/marca cuando aplique. ` +
+          `Solo cambias si el médico lo dice EXPLÍCITAMENTE ("súbele a 12 mg", "cambia a viernes"). ` +
+          `El historial NO persiste los tool_calls de la sesión original — si tú cambias presentación sin que te lo pidan, el doctor lo nota y rompe su continuidad clínica con el paciente.\n`
         : "";
       return {
         role: m.role,
