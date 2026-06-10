@@ -1,11 +1,12 @@
 import { getSession } from "@/lib/session";
 import { invalidatePriceCache } from "@/lib/price-tool";
+import { invalidatePeptideCache } from "@/lib/peptide-tool";
 
 // POST /api/admin/invalidate-price-cache
 //
-// Limpia el cache in-memory del Google Sheet de precios sin reiniciar
-// el servidor. Marco lo llama desde el iPhone (o el sidebar admin más
-// adelante) cuando edita el Sheet y quiere que el siguiente PDF refleje
+// Limpia los caches in-memory del catálogo (precios del Sheet + peptide
+// info de Supabase) sin reiniciar el servidor. Marco lo llama desde el
+// iPhone cuando edita la BD/Sheet y quiere que el siguiente PDF refleje
 // el cambio inmediato — en vez de esperar el TTL de 60s.
 //
 // NOTA importante: cada warm container de Vercel tiene su propia copia
@@ -20,6 +21,10 @@ export async function POST() {
   if (!session) return new Response("Unauthorized", { status: 401 });
 
   invalidatePriceCache();
-  console.log(`[admin] price cache invalidated by ${session.email}`);
-  return Response.json({ ok: true, note: "Cache invalidado en esta instancia." });
+  invalidatePeptideCache();
+  console.log(`[admin] price + peptide caches invalidated by ${session.email}`);
+  return Response.json({
+    ok: true,
+    note: "Caches de precios y péptidos invalidados en esta instancia.",
+  });
 }

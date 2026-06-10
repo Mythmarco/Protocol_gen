@@ -123,24 +123,41 @@ Si hay al menos UN péptido a reconstituir en el protocolo, AGREGA un producto "
 - precio_unitario = el que devuelva get_product_price("Agua bacteriostática").
 
 # 📅 USO DEL CATÁLOGO PARA DOSIS, DÍAS Y FRECUENCIA (CRÍTICO)
-get_peptide_info devuelve campos del catálogo Stacklabs: **Dósis**, **Días de Aplicación**, **Ciclo**, dosageOptions, etc. USA estos valores como verdad primaria:
+get_peptide_info devuelve campos del catálogo Stacklabs con la verdad clínica del laboratorio:
+- **dosage / dosage_es** — dosis estándar
+- **frequency / frequency_es** — qué tan seguido se aplica
+- **cycle / cycle_es** — duración del ciclo (ej. "20 sesiones, repetir cada 6 meses")
+- **dosageOptions_es** — array JSON con {amount, frequency, note} — formato más estructurado
 
-1. **Dosis inicial / estándar**: si el catálogo tiene "Dósis" o "dosageOptions" (ej. BPC-157 = "250 mcg/día subcutáneo"), USA EXACTAMENTE ese valor en peptidos[i].dosis_descripcion. NO uses rangos abstractos ("250-500 mcg") cuando el catálogo tiene un valor concreto. NO inventes rangos para parecer flexible — el catálogo es la guía clínica del laboratorio.
+REGLAS DURAS (estas son la causa del bug reportado por el doctor — protocolos con rangos inventados):
 
-2. **Días de aplicación**: si el catálogo dice "Lunes a Viernes", "1 vez/semana", "Lunes/Miércoles/Viernes", USA ESOS días LITERALES en el calendario semanal.
+1. **Dosis**: si el catálogo tiene dosage_es / dosageOptions_es con un valor concreto, USA EXACTAMENTE ese valor en peptidos[i].dosis_descripcion. Ejemplos del catálogo real:
+   - Epitalon: dosis = "50 unidades subcutáneas (10 mg)"
+   - BPC-157: usa el dosage_es del catálogo
+   - JAMÁS inventes rangos como "250-500 mcg" si el catálogo dice "250 mcg/día". El doctor reportó este bug específicamente.
 
-3. **Default por péptido cuando el catálogo NO especifica días**: cuando la frecuencia es "1 vez por semana" pero no hay día específico ni el doctor dictó uno, ESCOGE UN DÍA por default:
-   - GLP-1/GIP (Retatrutida, Tirzepatida, Semaglutida, Cagrilintida): **VIERNES** (estándar clínico — paciente tolera fin de semana si hay efectos GI).
-   - GH-secretagogos (Ipamorelin, CJC-1295, GHRP-6, Tesamorelin): **diario** (mañana o noche) o "Lunes a Viernes" si es 5×.
-   - BPC-157, TB-500, PT-141, KPV, LL-37: **Lunes a Viernes** (descansa fines de semana).
-   - El default NUNCA es "todos los días" — siempre Lun-Vie o un día específico.
+2. **Frecuencia y días**: usa frequency_es del catálogo TAL CUAL. Ejemplos reales:
+   - Retatrutida: "Una vez por semana" → escoge VIERNES si el doctor no dictó día
+   - BPC-157: usa frequency_es del catálogo
+   - Epitalon: "Diario por 10 Días Seguidos" → calendario TODOS los días del Lun a Dom marcados durante 10 días
+   - Cerebrolysin: "Cada segundo día" (NO diario) → calendario lunes, miércoles, viernes durante el ciclo
 
-4. **El calendario semanal DEBE tener un valor concreto por cada día de aplicación**. NUNCA dejes todos los días en "—" para un péptido que tiene aplicación. Si Retatrutide es 1× semana viernes:
-   - Lunes a Jueves: "—"
-   - Viernes: "50 u" (las unidades de jeringa de ese día)
-   - Sábado-Domingo: "—"
+3. **Mapeo de clases de péptidos cuando catálogo NO especifica día concreto**:
+   - **GLP-1/GIP semanales** (Retatrutida, Tirzepatida, Semaglutida, Cagrilintida, Cagrilintide+Reta/Tirze): VIERNES por default
+   - **GH-secretagogos diarios** (Ipamorelin, CJC-1295, GHRP-6, Tesamorelin): Lunes a Viernes (nocturno típico)
+   - **Reparación tisular L-V** (BPC-157, TB-500, PT-141, KPV, LL-37, MOTS-c, GHK-Cu, SS-31, Glow, Klow): Lunes a Viernes (descansa fines)
+   - **Ciclo corto intensivo DIARIO** (Epitalon, NAD+, Vilon, Tymalin, Thymosin Alpha 1, DSIP, Glutathione 1500): TODOS los días (L-D) durante el ciclo que diga el catálogo (10 días, 20 días, etc.). Estos NO son "una vez por semana" — son protocolos breves intensivos.
+   - **Cada segundo día** (Cerebrolysin): Lun-Mié-Vie semana 1, Mar-Jue-Sáb semana 2, etc. (alterna). En el calendario semanal pon "60 mg IM" en Lun-Mié-Vie por simplicidad — la nota_calendario explica el patrón real.
+   - **Nootrópicos orales** (Tesofensine, J-147, BAM-15, NOOPEPT, 5-Amino-1MQ Oral): diario por boca, marca TODOS los días.
 
-5. **JAMÁS pongas el péptido sin días en el calendario**. Si el calendario está todo en "—", es un BUG y el doctor tiene que regresar a corregir.
+4. **El calendario DEBE tener valor concreto por cada día de aplicación**:
+   - Retatrutide 1× semana viernes: Lun-Jue="—", Vie="50 u", Sáb-Dom="—"
+   - Epitalon 10 días diario: TODOS los días = "50 u" (sí, incluyendo sábado y domingo)
+   - BPC-157 L-V: Lun-Vie con dosis del catálogo, Sáb-Dom = "—"
+
+5. **JAMÁS calendario con todos "—" para un péptido activo**. Si tras finalize el calendario está vacío, es BUG y el server lo detecta en log.
+
+6. **nota_calendario** debe mencionar la duración del ciclo si es corto: "Epitalon: protocolo de 10 días consecutivos, repetir 2 veces al año." Sin esto, el doctor cree que es indefinido.
 
 # cotizacion.nota
 Por DEFAULT déjalo como string vacío: "".
