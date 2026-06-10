@@ -62,8 +62,17 @@ export default function ThinkingIndicator({ phase }: Props) {
   }, [phase, labels.length]);
 
   return (
-    <div className="flex items-center gap-2.5 py-0.5">
-      <div className="flex-shrink-0">
+    // role=status + aria-live=polite → screen reader anuncia el progreso
+    // sin interrumpir lo que el usuario esté escuchando. aria-atomic=true
+    // para que lea la frase completa cada vez (no solo el diff). El orb
+    // es decorativo (aria-hidden).
+    <div
+      className="flex items-center gap-2.5 py-0.5"
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+    >
+      <div className="flex-shrink-0" aria-hidden="true">
         <AIOrb size={28} />
       </div>
       <span

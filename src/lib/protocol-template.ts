@@ -335,6 +335,13 @@ export function buildProtocolHTML(data: ProtocoloData, options: BuildOptions = {
     .quote-summary-row.discount>div:last-child{color:var(--warning)}
     .footer{margin-top:12px;padding-top:8px;border-top:1px solid #e7e4e1;font-size:10px;color:var(--muted);display:flex;justify-content:space-between;gap:12px}
     .stack-section,.stack-section .card,.indicaciones-section,.indicaciones-section .card{break-inside:avoid-page;page-break-inside:avoid}
+    /* break-inside:avoid en LI individuales — un bullet largo del stack o
+       indicaciones se cortaba a la mitad entre páginas (workflow lo
+       flagged como bug visible para el doctor en protocolos densos). */
+    .bullet-list li{break-inside:avoid-page;page-break-inside:avoid}
+    /* word-break en .field .value — un nombre de paciente largo (ej.
+       compuesto) rompía el ancho del card. Ahora se quiebra suavemente. */
+    .field .value{word-break:break-word;overflow-wrap:anywhere}
     /* Puppeteer maneja los márgenes vía displayHeaderFooter — no fijamos
        margin en @page. El padding interno de .page en print se reduce porque
        el header/footer de Puppeteer ya ocupan ~14mm arriba y ~12mm abajo. */

@@ -220,7 +220,9 @@ export async function POST(req: Request) {
       <div style="width:100%;font-size:9px;color:#888;padding:0 12mm;
                   display:flex;justify-content:space-between;align-items:center;
                   font-family:'DM Sans','Helvetica',sans-serif;">
-        <span style="font-weight:600;color:#666;">${headerPaciente}</span>
+        <span style="font-weight:600;color:#666;max-width:60%;
+                     overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+                     display:inline-block;">${headerPaciente}</span>
         <span style="font-family:'Menlo','Courier New',monospace;font-weight:700;color:#d9943f;">${headerFolio}</span>
       </div>`;
     const footerTemplate = `

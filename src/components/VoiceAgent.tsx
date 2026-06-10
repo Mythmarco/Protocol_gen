@@ -985,7 +985,12 @@ export default function VoiceAgent({
         </button>
       </div>
 
-      <div className="text-center min-h-[2.5rem] flex-shrink-0">
+      <div
+        className="text-center min-h-[2.5rem] flex-shrink-0"
+        role="status"
+        aria-live={status === "error" ? "assertive" : "polite"}
+        aria-atomic="true"
+      >
         <p className={`text-sm font-medium transition-colors ${status === "error" ? "text-red-600" : "text-stone-700"}`}>
           {statusLabel}
         </p>

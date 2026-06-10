@@ -1478,6 +1478,9 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
                     ? "Transcribiendo audio…"
                     : "Escribe o dicta los datos del paciente…"
                 }
+                // aria-label WCAG 1.3.1 — placeholder no cuenta como label.
+                // Sin esto el screen reader solo decía 'cuadro de texto'.
+                aria-label="Escribe los datos del paciente o instrucciones para el protocolo"
                 rows={2}
                 disabled={recState !== "idle"}
                 className="flex-1 resize-none bg-transparent rounded-2xl px-4 py-3.5 md:py-4 text-base text-stone-800 placeholder-stone-400 focus:outline-none max-h-72 overflow-y-auto min-h-[60px] md:min-h-[72px] pr-24 disabled:opacity-70"
@@ -1700,8 +1703,14 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
               };
 
         return (
+          // role=alert para error (interrumpe SR), role=status para los
+          // demás (no interrumpe). aria-live=assertive para errores que
+          // requieren acción inmediata del doctor.
           <div
             className="fixed top-4 left-1/2 -translate-x-1/2 z-[60] pointer-events-none px-4"
+            role={toast.status === "error" ? "alert" : "status"}
+            aria-live={toast.status === "error" ? "assertive" : "polite"}
+            aria-atomic="true"
             style={{
               opacity: toast.visible ? 1 : 0,
               transform: `translateX(-50%) translateY(${toast.visible ? 0 : -8}px)`,

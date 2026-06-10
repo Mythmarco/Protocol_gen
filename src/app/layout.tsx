@@ -69,10 +69,37 @@ export default function RootLayout({
             generate <link rel="icon"> and <link rel="apple-touch-icon">
             automatically — no need to hand-write them here. */}
         <meta name="mobile-web-app-capable" content="yes" />
-        {/* iOS PWA splash. Sin esto, el doctor ve blanco ~1-2s al abrir
-            la PWA instalada. Con uno solo 1024 iOS lo estira al device.
-            Si más adelante queremos splashes per-resolución, agregamos
-            multiple <link> con media="(device-width: ...)". */}
+        {/* iOS PWA splash. iOS 13+ NO estira un splash genérico — si
+            no hay un <link> con media query que matchee al device exacto,
+            iOS lo descarta y muestra blanco. Workflow lo flagged como
+            must-fix; el fix correcto es generar splashes por resolución
+            con pwa-asset-generator (TODO sprint siguiente).
+            Por ahora: 4 resoluciones de iPhones populares pre-generadas.
+            Cuando no matchea ninguno, iOS cae al fondo del body (cream
+            #f5f3f1) que ya seteamos en el body inline style — al menos
+            no es blanco brusco. */}
+        <link
+          rel="apple-touch-startup-image"
+          href="/splash.png"
+          media="(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3)"
+        />
+        <link
+          rel="apple-touch-startup-image"
+          href="/splash.png"
+          media="(device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3)"
+        />
+        <link
+          rel="apple-touch-startup-image"
+          href="/splash.png"
+          media="(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3)"
+        />
+        <link
+          rel="apple-touch-startup-image"
+          href="/splash.png"
+          media="(device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3)"
+        />
+        {/* Fallback sin media query — versiones más viejas de iOS lo aceptan;
+            iOS 14+ con device específico arriba lo ignoran. */}
         <link rel="apple-touch-startup-image" href="/splash.png" />
         <script
           dangerouslySetInnerHTML={{
