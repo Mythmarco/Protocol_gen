@@ -638,12 +638,18 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
           )}
         </div>
 
-        <div className="grid grid-cols-2 gap-1.5">
+        {/* Botones a min-h-[44px] = mínimo recomendado iOS HIG para tap
+            targets (workflow lo flagged como must-fix — antes ~30px era
+            difícil acertar post-handoff). Texto sm para legibilidad de
+            médicos mayores. focus-visible:ring-2 amber-500 para contraste
+            WCAG 2.4.7 (antes ring-amber-100 daba 1.05:1, ilegible). */}
+        <div className="grid grid-cols-2 gap-2">
           <button
             onClick={() => openPreview(protocol)}
-            className="flex items-center justify-center gap-1.5 text-xs border border-stone-300 hover:border-amber-400 bg-white text-stone-700 hover:text-amber-700 rounded-lg px-2 py-1.5 font-semibold transition-colors"
+            aria-label={`Vista previa del protocolo de ${protocol.paciente.nombre}`}
+            className="flex items-center justify-center gap-1.5 min-h-[44px] text-sm border border-stone-300 hover:border-amber-400 bg-white text-stone-700 hover:text-amber-700 rounded-lg px-3 py-2.5 font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-1"
           >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
             </svg>
             Vista previa
@@ -652,9 +658,10 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
           <button
             onClick={() => handleDownloadOnly(protocol)}
             disabled={isDownloading}
-            className="flex items-center justify-center gap-1.5 text-xs border border-stone-300 hover:border-amber-400 bg-white text-stone-700 hover:text-amber-700 disabled:opacity-60 rounded-lg px-2 py-1.5 font-semibold transition-colors"
+            aria-label={`Descargar PDF de ${protocol.paciente.nombre}`}
+            className="flex items-center justify-center gap-1.5 min-h-[44px] text-sm border border-stone-300 hover:border-amber-400 bg-white text-stone-700 hover:text-amber-700 disabled:opacity-60 rounded-lg px-3 py-2.5 font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-1"
           >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
             </svg>
             {isDownloading ? "Descargando…" : "Descargar"}
@@ -663,10 +670,11 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
           {isArchived ? (
             <button
               disabled
-              className="flex items-center justify-center gap-1.5 text-xs border border-stone-200 bg-stone-50 text-stone-400 rounded-lg px-2 py-1.5 font-semibold cursor-not-allowed"
+              aria-label="Protocolo ya guardado en Drive — no requiere acción"
+              className="flex items-center justify-center gap-1.5 min-h-[44px] text-sm border border-stone-200 bg-stone-50 text-stone-500 rounded-lg px-3 py-2.5 font-semibold cursor-not-allowed"
               title="Ya está guardado en Drive"
             >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <polyline points="20 6 9 17 4 12"/>
               </svg>
               Guardado
@@ -675,9 +683,10 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
             <button
               onClick={handleDownloadPDF}
               disabled={isGeneratingPDF}
-              className="flex items-center justify-center gap-1.5 text-xs bg-amber-500 hover:bg-amber-400 disabled:opacity-60 text-white rounded-lg px-2 py-1.5 font-semibold transition-colors"
+              aria-label={`Guardar protocolo de ${protocol.paciente.nombre} en Drive`}
+              className="flex items-center justify-center gap-1.5 min-h-[44px] text-sm bg-amber-500 hover:bg-amber-400 disabled:opacity-60 text-white rounded-lg px-3 py-2.5 font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-700 focus-visible:ring-offset-1"
             >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>
               </svg>
               {isGeneratingPDF ? "Guardando…" : "Guardar"}
@@ -687,9 +696,10 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
           <button
             onClick={() => handleShare(protocol)}
             disabled={isSharing}
-            className="flex items-center justify-center gap-1.5 text-xs border border-stone-300 hover:border-amber-400 bg-white text-stone-700 hover:text-amber-700 disabled:opacity-60 rounded-lg px-2 py-1.5 font-semibold transition-colors"
+            aria-label={`Compartir protocolo de ${protocol.paciente.nombre}`}
+            className="flex items-center justify-center gap-1.5 min-h-[44px] text-sm border border-stone-300 hover:border-amber-400 bg-white text-stone-700 hover:text-amber-700 disabled:opacity-60 rounded-lg px-3 py-2.5 font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-1"
           >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
             </svg>
             {isSharing
@@ -1189,28 +1199,38 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
             Generador de Protocolos
           </span>
 
-          {/* Mode toggle: Texto / Voz */}
-          <div className="flex items-center bg-stone-100 rounded-lg p-0.5 ml-1 md:ml-3">
+          {/* Mode toggle: Texto / Voz. role=group + aria-label en wrapper,
+              aria-pressed en cada botón → SR anuncia "Texto, presionado"
+              o "Voz, no presionado". Workflow lo flagged como item 11. */}
+          <div
+            className="flex items-center bg-stone-100 rounded-lg p-0.5 ml-1 md:ml-3"
+            role="group"
+            aria-label="Modo de entrada"
+          >
             <button
               onClick={() => setMode("text")}
-              className={`text-xs px-3 py-1.5 rounded-md font-medium transition-all flex items-center gap-1.5 ${
+              aria-pressed={mode === "text"}
+              aria-label="Modo texto"
+              className={`text-xs px-3 py-1.5 rounded-md font-medium transition-all flex items-center gap-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 ${
                 mode === "text" ? "bg-white text-stone-800 shadow-sm" : "text-stone-500 hover:text-stone-700"
               }`}
               title="Modo texto (Claude)"
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
                 <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
               </svg>
               <span className="hidden sm:inline">Texto</span>
             </button>
             <button
               onClick={() => setMode("voice")}
-              className={`text-xs px-3 py-1.5 rounded-md font-medium transition-all flex items-center gap-1.5 ${
+              aria-pressed={mode === "voice"}
+              aria-label="Modo voz"
+              className={`text-xs px-3 py-1.5 rounded-md font-medium transition-all flex items-center gap-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 ${
                 mode === "voice" ? "bg-white text-amber-600 shadow-sm" : "text-stone-500 hover:text-stone-700"
               }`}
               title="Modo voz (GPT Realtime)"
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
                 <path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
                 <path d="M19 10v1a7 7 0 0 1-14 0v-1"/>
                 <line x1="12" y1="18" x2="12" y2="22"/>
@@ -1473,7 +1493,11 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
         {/* Input area — Claude/ChatGPT-style composer */}
         <div className="border-t border-stone-200 bg-white px-3 md:px-6 py-3 md:py-4">
           <div className="max-w-3xl mx-auto">
-            <div className="relative flex items-end rounded-2xl border border-stone-300 bg-white shadow-sm focus-within:border-amber-400 focus-within:ring-2 focus-within:ring-amber-100 transition-all">
+            {/* focus-within:ring-amber-400 = WCAG 2.4.7 compliant (~3.5:1
+                contraste sobre blanco). Antes era amber-100 que daba 1.05:1
+                — usuario de teclado no veía dónde estaba el foco.
+                Workflow item 13. */}
+            <div className="relative flex items-end rounded-2xl border border-stone-300 bg-white shadow-sm focus-within:border-amber-500 focus-within:ring-2 focus-within:ring-amber-400 transition-all">
               <textarea
                 ref={textareaRef}
                 value={input}
@@ -1576,41 +1600,50 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
              cuando hay un sheet abierto para que no compita visualmente. */}
         <nav
           className={`md:hidden ${mobileSheet ? "hidden" : "flex"} fixed bottom-0 left-0 right-0 z-30 items-center justify-around bg-white border-t border-stone-200 px-2 py-2 safe-area-inset-bottom`}
+          role="navigation"
+          aria-label="Navegación principal"
         >
           <button
             onClick={handleNewChat}
-            className="flex flex-col items-center gap-0.5 px-4 py-1.5 rounded-lg active:bg-stone-100 transition-colors"
+            aria-label="Empezar nueva conversación"
+            className="flex flex-col items-center gap-0.5 px-4 py-2 min-h-[48px] rounded-lg active:bg-stone-100 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
           >
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#d9943f" strokeWidth="2">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#d9943f" strokeWidth="2" aria-hidden="true">
               <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
             </svg>
-            <span className="text-[10px] font-medium text-stone-600">Nuevo</span>
+            {/* text-xs (12px) y text-stone-600 → contraste WCAG AA; antes text-[10px]+stone-600 era ilegible para médicos mayores (workflow item 14). */}
+            <span className="text-xs font-medium text-stone-700">Nuevo</span>
           </button>
           <button
             onClick={() => {
               setMobileSheet("history");
               markAllHistorySeen();
             }}
-            className="flex flex-col items-center gap-0.5 px-4 py-1.5 rounded-lg active:bg-stone-100 transition-colors relative"
+            aria-label={`Abrir historial${unreadCount > 0 ? ` — ${unreadCount} sin leer` : ""}`}
+            className="flex flex-col items-center gap-0.5 px-4 py-2 min-h-[48px] rounded-lg active:bg-stone-100 transition-colors relative focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
           >
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#504d4d" strokeWidth="2">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#504d4d" strokeWidth="2" aria-hidden="true">
               <path d="M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" />
             </svg>
-            <span className="text-[10px] font-medium text-stone-600">Historial</span>
+            <span className="text-xs font-medium text-stone-700">Historial</span>
             {unreadCount > 0 && (
-              <span className="absolute top-0 right-2 bg-amber-500 text-white text-[9px] font-bold rounded-full min-w-[16px] h-4 flex items-center justify-center px-1">
+              <span
+                className="absolute top-0 right-2 bg-amber-500 text-white text-[10px] font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1"
+                aria-hidden="true"
+              >
                 {unreadCount}
               </span>
             )}
           </button>
           <button
             onClick={() => setMobileSheet("account")}
-            className="flex flex-col items-center gap-0.5 px-4 py-1.5 rounded-lg active:bg-stone-100 transition-colors"
+            aria-label="Abrir cuenta y configuración"
+            className="flex flex-col items-center gap-0.5 px-4 py-2 min-h-[48px] rounded-lg active:bg-stone-100 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
           >
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#504d4d" strokeWidth="2">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#504d4d" strokeWidth="2" aria-hidden="true">
               <circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" />
             </svg>
-            <span className="text-[10px] font-medium text-stone-600">Cuenta</span>
+            <span className="text-xs font-medium text-stone-700">Cuenta</span>
           </button>
         </nav>
       </div>

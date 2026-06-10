@@ -1028,6 +1028,15 @@ export default function VoiceAgent({
       {transcript.length > 0 && (
         <div
           className="w-full max-w-2xl bg-white border border-stone-200 rounded-2xl p-4 shadow-sm flex-1 min-h-0 overflow-y-auto"
+          // role=log + aria-live=polite + aria-atomic=false → SR anuncia
+          // CADA turno nuevo a medida que llega, sin re-leer el historial
+          // entero. Crítico para entornos ruidosos (consulta) o cuando el
+          // doctor está mirando otra cosa — el transcript es el subtítulo
+          // de la voz. Workflow item 12.
+          role="log"
+          aria-live="polite"
+          aria-atomic="false"
+          aria-label="Transcripción de la conversación"
           // overscroll-behavior:contain → si el doctor hace pull-to-refresh
           // dentro del transcript, el rubber-band SE QUEDA aquí (no se
           // propaga al documento ni al PWA shell). Combinado con el lock
