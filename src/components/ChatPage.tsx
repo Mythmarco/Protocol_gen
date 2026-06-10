@@ -1196,11 +1196,12 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
         </div>
 
         <div className="p-4 border-t border-stone-700 space-y-3">
-          {/* FX rate setting — wrapper blanco para que el card de
-              settings se vea claro y legible sobre el sidebar oscuro
-              (en lugar de mezclar texto claro con cards claras). */}
+          {/* FX rate setting — colapsable en desktop (el sidebar tiene
+              espacio premium; Marco reportó que el card lleno tapaba el
+              historial). Header siempre visible con valor inline.
+              localStorage persiste la preferencia entre sesiones. */}
           <div className="bg-white rounded-xl p-3.5 shadow-lg">
-            <FxRateSetting />
+            <FxRateSetting collapsible />
           </div>
           <div>
             <div className="text-xs text-stone-400 truncate mb-2">{user.email}</div>

@@ -8,13 +8,44 @@ import { useEffect, useState } from "react";
 
 type FxResponse = { rate: number; source: "user" | "env" | "default" };
 
-export default function FxRateSetting() {
+interface Props {
+  /** Si true, el card arranca colapsado (solo header con valor) y se
+   *  expande al toque. Útil en el sidebar desktop donde el espacio es
+   *  premium. En móvil (sheet de Cuenta) lo dejamos siempre expandido
+   *  porque el sheet ya es modal y tiene espacio. */
+  collapsible?: boolean;
+}
+
+const COLLAPSED_KEY = "p4a:fx-setting:collapsed";
+
+export default function FxRateSetting({ collapsible = false }: Props) {
   const [data, setData] = useState<FxResponse | null>(null);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [justSaved, setJustSaved] = useState(false);
+
+  // Estado colapsado SOLO cuando collapsible=true. Persiste en
+  // localStorage para que la preferencia del doctor se mantenga entre
+  // sesiones. Default: colapsado (Marco reportó que tapaba).
+  const [collapsed, setCollapsed] = useState<boolean>(() => {
+    if (!collapsible || typeof window === "undefined") return false;
+    try {
+      const stored = window.localStorage.getItem(COLLAPSED_KEY);
+      return stored === null ? true : stored === "1";
+    } catch {
+      return true;
+    }
+  });
+  const setCollapsedPersist = (next: boolean) => {
+    setCollapsed(next);
+    if (typeof window !== "undefined") {
+      try {
+        window.localStorage.setItem(COLLAPSED_KEY, next ? "1" : "0");
+      } catch {}
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -124,36 +155,86 @@ export default function FxRateSetting() {
 
   const meta = sourceMeta(data.source);
 
-  return (
-    <div>
-      {/* Header con título e icono — refuerza qué es este bloque. */}
-      <div className="flex items-center gap-2 mb-3">
+  // Header con título e icono. Si collapsible=true, el header se
+  // vuelve botón clickeable que toggle el body + muestra inline el
+  // valor actual (para que el doctor lo vea sin expandir).
+  const headerContent = (
+    <>
+      <svg
+        width="14"
+        height="14"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.2"
+        className="text-amber-600 flex-shrink-0"
+        aria-hidden="true"
+      >
+        <line x1="12" y1="1" x2="12" y2="23" />
+        <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
+      </svg>
+      <h4 className="text-xs font-bold tracking-wider text-stone-700 uppercase">
+        Tipo de cambio USD
+      </h4>
+      {/* Si está colapsado, mostramos el valor inline en el header como
+          chip ámbar — el doctor ve el FX sin necesidad de expandir. */}
+      {collapsible && collapsed && !editing && (
+        <span className="text-xs font-bold text-stone-800 tabular-nums bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5 flex-shrink-0">
+          ${data.rate.toFixed(2)}
+        </span>
+      )}
+      {justSaved && (
+        <span
+          className="ml-auto text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5"
+          role="status"
+          aria-live="polite"
+        >
+          ✓ Guardado
+        </span>
+      )}
+      {collapsible && (
         <svg
           width="14"
           height="14"
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"
-          strokeWidth="2.2"
-          className="text-amber-600 flex-shrink-0"
+          strokeWidth="2.4"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className={`text-stone-500 flex-shrink-0 transition-transform ml-auto ${
+            collapsed ? "" : "rotate-180"
+          }`}
           aria-hidden="true"
         >
-          <line x1="12" y1="1" x2="12" y2="23" />
-          <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
+          <polyline points="6 9 12 15 18 9" />
         </svg>
-        <h4 className="text-xs font-bold tracking-wider text-stone-700 uppercase">
-          Tipo de cambio USD
-        </h4>
-        {justSaved && (
-          <span
-            className="ml-auto text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5"
-            role="status"
-            aria-live="polite"
-          >
-            ✓ Guardado
-          </span>
-        )}
-      </div>
+      )}
+    </>
+  );
+
+  return (
+    <div>
+      {collapsible ? (
+        <button
+          type="button"
+          onClick={() => setCollapsedPersist(!collapsed)}
+          aria-expanded={!collapsed}
+          aria-controls="fx-setting-body"
+          className="w-full flex items-center gap-2 mb-3 rounded-lg hover:bg-stone-50 active:bg-stone-100 -mx-1 px-1 py-1 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+        >
+          {headerContent}
+        </button>
+      ) : (
+        <div className="flex items-center gap-2 mb-3">{headerContent}</div>
+      )}
+
+      {/* Body — visible siempre que NO esté colapsado. id para aria-controls. */}
+      <div
+        id="fx-setting-body"
+        hidden={collapsible && collapsed}
+        style={{ display: collapsible && collapsed ? "none" : undefined }}
+      >
 
       {!editing ? (
         <>
@@ -335,6 +416,7 @@ export default function FxRateSetting() {
           </div>
         </>
       )}
+      </div>{/* /body */}
     </div>
   );
 }
