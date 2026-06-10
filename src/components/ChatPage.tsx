@@ -1196,9 +1196,10 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
         </div>
 
         <div className="p-4 border-t border-stone-700 space-y-3">
-          {/* FX rate setting con tema oscuro inline (el componente usa
-              fondos claros) — wrappeamos para forzar contraste apropiado. */}
-          <div className="bg-stone-800 rounded-xl p-3">
+          {/* FX rate setting — wrapper blanco para que el card de
+              settings se vea claro y legible sobre el sidebar oscuro
+              (en lugar de mezclar texto claro con cards claras). */}
+          <div className="bg-white rounded-xl p-3.5 shadow-lg">
             <FxRateSetting />
           </div>
           <div>
