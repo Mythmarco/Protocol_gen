@@ -33,6 +33,13 @@ interface Props {
   // ChatPage limpie pendingProtocol + savedSnapshot — si no, el toolbar
   // "Archivado" se queda colgado tras salir de un protocolo cargado.
   onNewConversation?: () => void;
+  // Se dispara cuando el doctor toca el mic para arrancar una sesión
+  // VOZ FRESH (sin priorTranscript). Sirve para que ChatPage limpie el
+  // pendingProtocol de una sesión ANTERIOR — antes el action card de
+  // un protocolo viejo se quedaba colgado bajo el primer mensaje de la
+  // sesión nueva. Si el doctor quería editar ese protocolo, habría
+  // priorTranscript del flow anterior, así que no se dispara.
+  onFreshSessionStart?: () => void;
   // Card opcional para renderizar al final del transcript de voz cuando
   // hay un protocolo generado o cargado de historial. ChatPage construye
   // los botones (Vista previa / Descargar / Drive) y los pasa aquí —
@@ -574,6 +581,7 @@ export default function VoiceAgent({
   onTranscriptChange,
   initialTranscript,
   onNewConversation,
+  onFreshSessionStart,
   bottomActionCard,
 }: Props) {
   const [status, setStatus] = useState<Status>("idle");
@@ -708,6 +716,15 @@ export default function VoiceAgent({
     // Keep prior transcript visible so the agent (and the doctor) can reference it.
     // We only clear when the user explicitly hits "O empieza una conversación nueva".
     const priorTranscript = transcript;
+
+    // Si no hay priorTranscript, es una sesión FRESH (no continuación).
+    // Avisamos al parent para que limpie pendingProtocol/savedSnapshot/
+    // voiceSeed de cualquier sesión anterior — sin esto el action card
+    // del protocolo viejo se quedaba colgado bajo el primer mensaje del
+    // agente en la nueva sesión. Bug reportado por Marco.
+    if (priorTranscript.length === 0) {
+      onFreshSessionStart?.();
+    }
 
     try {
       // 1. Get ephemeral key from server

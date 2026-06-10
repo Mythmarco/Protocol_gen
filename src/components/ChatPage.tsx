@@ -1360,6 +1360,16 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
                 setVoiceTranscript([]);
                 setInput("");
               }}
+              onFreshSessionStart={() => {
+                // Bug reportado por Marco: si el doctor genera un protocolo,
+                // y luego toca el mic otra vez (sin pasar por "Nueva
+                // conversación"), la nueva sesión arranca con priorTranscript
+                // vacío pero pendingProtocol seguía colgado → action card
+                // del protocolo viejo aparecía bajo el primer mensaje del
+                // agente en la sesión NUEVA. Limpiamos preventivamente.
+                setPendingProtocol(null);
+                setSavedSnapshot(null);
+              }}
               // Pasa el action card al final del transcript de voz para que
               // los botones Vista previa / Descargar / Drive aparezcan
               // "como parte del último output del agente", no como un
