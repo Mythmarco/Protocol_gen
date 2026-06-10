@@ -727,30 +727,71 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
     );
   };
 
+  // Cache del PDF rendereado client-side. Llave = referencia del objeto
+  // protocol (identidad estricta). Si el doctor toca Descargar y luego
+  // Compartir, la SEGUNDA llamada es instantánea — antes cada click
+  // hacía un Puppeteer render full de 8-15s + cold start. Marco reportó
+  // que ambos botones tardaban mucho.
+  //
+  // Se invalida automáticamente al cambiar el objeto protocol (edita,
+  // regenera, carga otro del historial → React identity cambia → cache
+  // miss → re-render fresco).
+  const pdfBlobCache = useRef<Map<ProtocoloData, { blob: Blob; folio: string; promise?: Promise<{ blob: Blob; folio: string }> }>>(new Map());
+
   // Render PDF SIN archivar — no folio nuevo, no Drive upload, no row
-  // en Supabase. Lo usan los botones "Descargar" y "Compartir" para
-  // obtener el blob del PDF sin afectar el estado de "archivado".
-  // El folio que regresa el server es el guardado en datos_json (o
-  // vacío si nunca se guardó).
+  // en Supabase. Lo usan los botones "Descargar" y "Compartir".
   const fetchPdfBlob = async (protocol: ProtocoloData): Promise<{ blob: Blob; folio: string }> => {
-    const res = await fetch("/api/pdf", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ protocolData: protocol, mode: "download" }),
-    });
-    if (!res.ok) {
-      const detail = await res.text().catch(() => "");
-      throw new Error(
-        `PDF API ${res.status}${detail ? ` — ${detail.slice(0, 200)}` : ""}`
-      );
+    const cached = pdfBlobCache.current.get(protocol);
+    // Si ya tenemos el blob, devuélvelo de una.
+    if (cached?.blob) return { blob: cached.blob, folio: cached.folio };
+    // Si hay un fetch EN VUELO (ej. Descargar + Compartir tocados rápido),
+    // devuelve la misma Promise — evita doble Puppeteer render.
+    if (cached?.promise) return cached.promise;
+
+    const promise = (async () => {
+      const res = await fetch("/api/pdf", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ protocolData: protocol, mode: "download" }),
+      });
+      if (!res.ok) {
+        const detail = await res.text().catch(() => "");
+        throw new Error(
+          `PDF API ${res.status}${detail ? ` — ${detail.slice(0, 200)}` : ""}`
+        );
+      }
+      const folio = res.headers.get("X-Folio") || protocol.cotizacion?.folio || "";
+      const blob = await res.blob();
+      // Guarda el blob resuelto en el cache (no la Promise) para que el
+      // próximo hit sea inmediato.
+      pdfBlobCache.current.set(protocol, { blob, folio });
+      return { blob, folio };
+    })();
+    // Guarda la Promise para que clicks paralelos reusen este fetch.
+    pdfBlobCache.current.set(protocol, { ...cached, promise } as { blob: Blob; folio: string; promise: Promise<{ blob: Blob; folio: string }> });
+    try {
+      return await promise;
+    } catch (err) {
+      // Si falla, limpia el cache para permitir reintentar.
+      pdfBlobCache.current.delete(protocol);
+      throw err;
     }
-    const folio =
-      res.headers.get("X-Folio") ||
-      protocol.cotizacion?.folio ||
-      "";
-    const blob = await res.blob();
-    return { blob, folio };
   };
+
+  // Pre-fetch del PDF en background ni bien se tenga un pendingProtocol
+  // nuevo. Cuando el doctor toque Descargar/Compartir, el blob ya estará
+  // listo (o se devolverá la Promise en vuelo, que está más avanzada que
+  // si arrancara desde cero). El render server-side corre en paralelo con
+  // que el doctor lee/aprueba el preview.
+  useEffect(() => {
+    if (!pendingProtocol) return;
+    if (pdfBlobCache.current.has(pendingProtocol)) return;
+    // Disparado sin await — no nos importa el resultado aquí, solo que
+    // se popule el cache. Errores silenciados (el botón los maneja si el
+    // doctor llega antes de que termine).
+    fetchPdfBlob(pendingProtocol).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingProtocol]);
 
   const handleDownloadOnly = async (protocol: ProtocoloData) => {
     setIsDownloading(true);

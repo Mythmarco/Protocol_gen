@@ -122,6 +122,26 @@ Si hay al menos UN péptido a reconstituir en el protocolo, AGREGA un producto "
 - Mínimo qty = 1 si hay al menos 1 vial de péptido.
 - precio_unitario = el que devuelva get_product_price("Agua bacteriostática").
 
+# 📅 USO DEL CATÁLOGO PARA DOSIS, DÍAS Y FRECUENCIA (CRÍTICO)
+get_peptide_info devuelve campos del catálogo Stacklabs: **Dósis**, **Días de Aplicación**, **Ciclo**, dosageOptions, etc. USA estos valores como verdad primaria:
+
+1. **Dosis inicial / estándar**: si el catálogo tiene "Dósis" o "dosageOptions" (ej. BPC-157 = "250 mcg/día subcutáneo"), USA EXACTAMENTE ese valor en peptidos[i].dosis_descripcion. NO uses rangos abstractos ("250-500 mcg") cuando el catálogo tiene un valor concreto. NO inventes rangos para parecer flexible — el catálogo es la guía clínica del laboratorio.
+
+2. **Días de aplicación**: si el catálogo dice "Lunes a Viernes", "1 vez/semana", "Lunes/Miércoles/Viernes", USA ESOS días LITERALES en el calendario semanal.
+
+3. **Default por péptido cuando el catálogo NO especifica días**: cuando la frecuencia es "1 vez por semana" pero no hay día específico ni el doctor dictó uno, ESCOGE UN DÍA por default:
+   - GLP-1/GIP (Retatrutida, Tirzepatida, Semaglutida, Cagrilintida): **VIERNES** (estándar clínico — paciente tolera fin de semana si hay efectos GI).
+   - GH-secretagogos (Ipamorelin, CJC-1295, GHRP-6, Tesamorelin): **diario** (mañana o noche) o "Lunes a Viernes" si es 5×.
+   - BPC-157, TB-500, PT-141, KPV, LL-37: **Lunes a Viernes** (descansa fines de semana).
+   - El default NUNCA es "todos los días" — siempre Lun-Vie o un día específico.
+
+4. **El calendario semanal DEBE tener un valor concreto por cada día de aplicación**. NUNCA dejes todos los días en "—" para un péptido que tiene aplicación. Si Retatrutide es 1× semana viernes:
+   - Lunes a Jueves: "—"
+   - Viernes: "50 u" (las unidades de jeringa de ese día)
+   - Sábado-Domingo: "—"
+
+5. **JAMÁS pongas el péptido sin días en el calendario**. Si el calendario está todo en "—", es un BUG y el doctor tiene que regresar a corregir.
+
 # cotizacion.nota
 Por DEFAULT déjalo como string vacío: "".
 NO incluyas explicaciones técnicas ("Public MXN price $X IVA included", "Converted at X.X MXN/USD", "Precio con IVA", "Tipo de cambio"). NO repitas información que ya está en la tabla de productos. Solo escribe algo si el médico te dio una nota específica (ej. "paga en 2 partes").
@@ -221,20 +241,79 @@ LLAMA finalize_protocol con el JSON completo. No respondas con texto suelto.`;
       } as OpenAI.Responses.ResponseInputItem);
     }
 
-    // Trackea queries de get_product_price ejecutadas ANTES de procesar
-    // finalize — el modelo puede emitir ambos en el mismo turno.
-    for (const tc of turnToolCalls) {
-      if (tc.name === "get_product_price") {
-        try {
-          const args = tc.arguments ? JSON.parse(tc.arguments) : {};
-          if (typeof args.product_name === "string") {
-            pricedQueries.add(normQuery(args.product_name));
+    // EJECUTA lookups (no-finalize) ANTES de procesar finalize. El modelo
+    // emite frecuentemente get_product_price + finalize en el MISMO turno
+    // — antes el finalize se procesaba PRIMERO y pricedCatalog quedaba
+    // vacío, por lo que el overwrite de precios no encontraba match y los
+    // precios alucinados (ya divididos a USD) llegaban al PDF. Ahora
+    // ejecutamos lookups primero, populamos pricedCatalog, y entonces
+    // chequeamos finalize con datos reales.
+    const lookups = turnToolCalls.filter((c) => c.name !== "finalize_protocol");
+    if (lookups.length > 0) {
+      const results = await Promise.all(
+        lookups.map(async (tc) => {
+          let args: Record<string, unknown> = {};
+          try {
+            args = tc.arguments ? JSON.parse(tc.arguments) : {};
+          } catch {}
+          let result: unknown;
+          if (tc.name === "get_peptide_info") {
+            result = await executePeptideTool(args as { name: string });
+          } else if (tc.name === "list_peptides") {
+            result = await executeListPeptidesTool();
+          } else if (tc.name === "get_product_price") {
+            result = await executePriceTool(args as { product_name: string });
+            // También trackea el query para validación contra finalize.
+            if (typeof args.product_name === "string") {
+              pricedQueries.add(normQuery(args.product_name));
+            }
+          } else if (tc.name === "search_past_protocols") {
+            result = await executeMemoryTool(
+              args as { query: string; limit?: number },
+              session.id
+            );
+          } else {
+            result = { error: `unknown tool: ${tc.name}` };
           }
-        } catch {}
+          return { tc, result };
+        })
+      );
+
+      // Populamos pricedCatalog + push outputs al input.
+      for (const { tc, result } of results) {
+        if (tc.name === "get_product_price") {
+          try {
+            const args = tc.arguments ? JSON.parse(tc.arguments) : {};
+            const query = String(args.product_name ?? "").trim();
+            const r = result as { results?: Array<{ producto?: string; precio_mxn_con_iva?: number }> };
+            if (Array.isArray(r?.results) && r.results.length > 0) {
+              for (const row of r.results) {
+                if (typeof row.precio_mxn_con_iva === "number" && row.precio_mxn_con_iva > 0) {
+                  pricedCatalog.push({
+                    query,
+                    nombre: String(row.producto ?? ""),
+                    mxn: row.precio_mxn_con_iva,
+                  });
+                }
+              }
+            }
+          } catch (err) {
+            console.warn(`[generate-protocol] could not parse price result:`, err);
+          }
+        }
+        input.push({
+          type: "function_call_output",
+          call_id: tc.call_id,
+          output: JSON.stringify(result),
+        } as OpenAI.Responses.ResponseInputItem);
       }
+      console.log(
+        `[generate-protocol] turn ${turn + 1}: ${lookups.length} tools, ${Date.now() - tTurn}ms`
+      );
     }
 
-    // Did the model call finalize?
+    // Did the model call finalize? (chequeado DESPUÉS de ejecutar lookups
+    // para que pricedCatalog tenga los precios reales del catálogo).
     const finalCall = turnToolCalls.find((c) => c.name === "finalize_protocol");
     if (finalCall) {
       try {
@@ -363,6 +442,30 @@ LLAMA finalize_protocol con el JSON completo. No respondas con texto suelto.`;
           candidate.cotizacion.total = productosTotal - descuento + envioMonto;
         }
 
+        // VALIDACIÓN del calendario: detecta péptidos con TODOS los días
+        // en "—" (calendario vacío para ese péptido). Loggea warning para
+        // diagnóstico — significa que el modelo no escogió un día default
+        // pese a las reglas del prompt. No bloquea (el doctor puede pedir
+        // un cambio), pero queda visible en logs para iterar el prompt.
+        if (Array.isArray(candidate.protocolo?.calendario)) {
+          const DAYS = ["Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado", "Domingo"];
+          const peptidosWithoutDays: string[] = [];
+          for (const row of candidate.protocolo.calendario) {
+            const allEmpty = DAYS.every((d) => {
+              const v = (row as unknown as Record<string, unknown>)[d];
+              return !v || String(v).trim() === "" || String(v).trim() === "—";
+            });
+            if (allEmpty) {
+              peptidosWithoutDays.push(String((row as { peptido_label?: string }).peptido_label ?? "?"));
+            }
+          }
+          if (peptidosWithoutDays.length > 0) {
+            console.warn(
+              `[generate-protocol] reqId=${reqId} CALENDARIO BUG — peptidos sin días: ${peptidosWithoutDays.join(", ")}`
+            );
+          }
+        }
+
         finalProtocol = candidate;
         // Server controls metadata (today's date, doctor email) — never trust the model.
         enrichProtocolMetadata(finalProtocol, {
@@ -379,74 +482,11 @@ LLAMA finalize_protocol con el JSON completo. No respondas con texto suelto.`;
       break;
     }
 
-    // Execute lookups EN PARALELO. Antes era un for/await secuencial
-    // que sumaba la latencia de cada tool (peptide ~50ms, price ~200ms
-    // por ser HTTP a Google Sheets). Con 6 tools en serie eso suma
-    // ~1.5s muerto; con Promise.all baja a ~250ms (max(individuales)).
-    const lookups = turnToolCalls.filter((c) => c.name !== "finalize_protocol");
-    if (lookups.length === 0) {
-      console.warn("[generate-protocol] model stopped without calling finalize_protocol");
+    // Si no había lookups Y no hubo finalize, el modelo se rindió.
+    if (lookups.length === 0 && !finalCall) {
+      console.warn(`[generate-protocol] reqId=${reqId} model stopped without calling finalize_protocol`);
       break;
     }
-
-    const results = await Promise.all(
-      lookups.map(async (tc) => {
-        let args: Record<string, unknown> = {};
-        try {
-          args = tc.arguments ? JSON.parse(tc.arguments) : {};
-        } catch {}
-
-        let result: unknown;
-        if (tc.name === "get_peptide_info") {
-          result = await executePeptideTool(args as { name: string });
-        } else if (tc.name === "list_peptides") {
-          result = await executeListPeptidesTool();
-        } else if (tc.name === "get_product_price") {
-          result = await executePriceTool(args as { product_name: string });
-        } else if (tc.name === "search_past_protocols") {
-          result = await executeMemoryTool(
-            args as { query: string; limit?: number },
-            session.id
-          );
-        } else {
-          result = { error: `unknown tool: ${tc.name}` };
-        }
-        return { tc, result };
-      })
-    );
-
-    for (const { tc, result } of results) {
-      // Si fue get_product_price y devolvió MXN real, lo guardamos en
-      // pricedCatalog para SOBRESCRIBIR el precio del modelo más adelante.
-      if (tc.name === "get_product_price") {
-        try {
-          const args = tc.arguments ? JSON.parse(tc.arguments) : {};
-          const query = String(args.product_name ?? "").trim();
-          const r = result as { results?: Array<{ producto?: string; precio_mxn_con_iva?: number }> };
-          if (Array.isArray(r?.results) && r.results.length > 0) {
-            for (const row of r.results) {
-              if (typeof row.precio_mxn_con_iva === "number" && row.precio_mxn_con_iva > 0) {
-                pricedCatalog.push({
-                  query,
-                  nombre: String(row.producto ?? ""),
-                  mxn: row.precio_mxn_con_iva,
-                });
-              }
-            }
-          }
-        } catch (err) {
-          console.warn(`[generate-protocol] could not parse price result:`, err);
-        }
-      }
-      input.push({
-        type: "function_call_output",
-        call_id: tc.call_id,
-        output: JSON.stringify(result),
-      } as OpenAI.Responses.ResponseInputItem);
-    }
-    console.log(
-      `[generate-protocol] turn ${turn + 1}: ${lookups.length} tools, ${Date.now() - tTurn}ms`
-    );
   }
 
   console.log(`[generate-protocol] reqId=${reqId} total ${Date.now() - t0}ms`);
