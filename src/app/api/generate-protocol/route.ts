@@ -155,12 +155,17 @@ LLAMA finalize_protocol con el JSON completo. No respondas con texto suelto.`;
   let finalProtocol: ProtocoloData | null = null;
   const t0 = Date.now();
   const reqId = newRequestId();
-  // Trackeo de queries de precio que el modelo SÍ ejecutó. Al finalizar
-  // verificamos que cada producto cotizado tenga un get_product_price
-  // matcheable en el historial — sin esto el modelo puede emitir
-  // finalize y get_product_price en el MISMO turno y se procesa el
-  // finalize primero (con precios alucinados). Workflow item 6.
+  // Trackeo de queries de precio + RESULTADO MXN del catálogo. Lo usamos
+  // para 2 cosas:
+  //   (a) Validar que cada producto cotizado pasó por get_product_price
+  //       (anti-alucinación, workflow item 6).
+  //   (b) SOBRESCRIBIR el precio del modelo con el MXN real del catálogo
+  //       antes de enrichear — workflow encontró que el modelo a veces
+  //       convertía a USD pese a la regla 6 (cotiza en MXN), y luego
+  //       enrichProtocolMetadata convertía OTRA vez → precios divididos
+  //       dos veces ($6,960 → $24.08). Esto se acabó.
   const pricedQueries = new Set<string>();
+  const pricedCatalog: Array<{ query: string; nombre: string; mxn: number }> = [];
   const normQuery = (q: string) =>
     q.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 
@@ -169,6 +174,19 @@ LLAMA finalize_protocol con el JSON completo. No respondas con texto suelto.`;
   // finalize). 5 es el techo defensivo para edge cases con péptidos
   // que requieren lookups extra. Antes el 8 enmascaraba el bug de
   // llamadas seriales — el modelo aprovechaba todos los turnos.
+  // Reasoning effort dinámico: medium SOLO si hay 3+ péptidos. Para
+  // protocolos simples (1-2 péptidos, caso típico de Marco) low es
+  // suficiente y baja la latencia ~5-10s. Marco reportó que generar el
+  // protocolo de un solo péptido se sentía lentísimo — innecesario
+  // gastar reasoning medium en eso.
+  const peptidosCount = Array.isArray(
+    (gathered as { peptidos?: unknown[] })?.peptidos
+  )
+    ? ((gathered as { peptidos: unknown[] }).peptidos.length)
+    : 0;
+  const effort: "low" | "medium" = peptidosCount >= 3 ? "medium" : "low";
+  console.log(`[generate-protocol] reqId=${reqId} peptidos=${peptidosCount} reasoning_effort=${effort}`);
+
   for (let turn = 0; turn < 5; turn++) {
     const tTurn = Date.now();
     const resp = await client.responses.create({
@@ -177,13 +195,7 @@ LLAMA finalize_protocol con el JSON completo. No respondas con texto suelto.`;
       input,
       tools: OPENAI_RESPONSES_TOOLS,
       tool_choice: "auto",
-      // medium en lugar de low: este endpoint corre la composición compleja
-      // (validar péptidos, calcular unidades, armar calendario y cotización
-      // con precios reales, redactar sinergia). low producía errores
-      // sistemáticos en cotizaciones con múltiples péptidos. medium agrega
-      // ~2-5s pero la tasa de errores baja notablemente. Chat de texto sigue
-      // en low porque sus turnos son simples (Q&A + lookups).
-      reasoning: { effort: "medium" },
+      reasoning: { effort },
       text: { verbosity: "low" },
       stream: false,
     });
@@ -284,6 +296,73 @@ LLAMA finalize_protocol con el JSON completo. No respondas con texto suelto.`;
           continue;
         }
 
+        // SOBRESCRIBE precios del modelo con MXN reales del catálogo.
+        // El modelo a veces convertía a USD pese a la regla 6, y luego
+        // enrichProtocolMetadata convertía OTRA vez → precios divididos
+        // dos veces ($6,960 → $24.08 en lugar de $409.41). Ahora el
+        // servidor pone el precio MXN canónico ANTES de enriquecer.
+        if (Array.isArray(candidate.cotizacion?.productos)) {
+          const matchPrice = (productoNombre: string): number | null => {
+            const target = normQuery(productoNombre);
+            if (!target) return null;
+            // Match: el query o el nombre catalogo aparece en el otro,
+            // O comparten palabras significativas (≥3 chars).
+            for (const c of pricedCatalog) {
+              const q = normQuery(c.query);
+              const n = normQuery(c.nombre);
+              if (q === target || n === target) return c.mxn;
+              if (target.includes(q) || q.includes(target)) return c.mxn;
+              if (target.includes(n) || n.includes(target)) return c.mxn;
+            }
+            // Fallback fuzzy: si hay al menos 2 palabras significativas en común
+            const targetWords = new Set(
+              target.split(" ").filter((w) => w.length >= 3)
+            );
+            for (const c of pricedCatalog) {
+              const candidateWords = normQuery(c.nombre + " " + c.query)
+                .split(" ")
+                .filter((w) => w.length >= 3);
+              const common = candidateWords.filter((w) => targetWords.has(w));
+              if (common.length >= 2) return c.mxn;
+            }
+            return null;
+          };
+
+          let overwrites = 0;
+          let mismatches: string[] = [];
+          candidate.cotizacion.productos = candidate.cotizacion.productos.map((p) => {
+            const realMxn = matchPrice(String(p?.nombre ?? ""));
+            if (realMxn != null && realMxn !== Number(p?.precio_unitario)) {
+              overwrites++;
+              const oldPrice = Number(p?.precio_unitario) || 0;
+              if (Math.abs(oldPrice - realMxn) > 1) {
+                mismatches.push(`${p.nombre}: model=${oldPrice} → catalog=${realMxn} MXN`);
+              }
+              return { ...p, precio_unitario: realMxn };
+            }
+            return p;
+          });
+          if (overwrites > 0) {
+            console.log(
+              `[generate-protocol] reqId=${reqId} overwrote ${overwrites} precio(s) con MXN del catálogo`
+            );
+            if (mismatches.length > 0) {
+              console.warn(`[generate-protocol] reqId=${reqId} price mismatches:\n  ${mismatches.join("\n  ")}`);
+            }
+          }
+          // Recalcular total en MXN con los precios corregidos.
+          const productosTotal = candidate.cotizacion.productos.reduce(
+            (sum, p) => sum + (Number(p.qty) || 0) * (Number(p.precio_unitario) || 0),
+            0
+          );
+          const envioMonto =
+            candidate.cotizacion.envio_tipo === "costo"
+              ? Number(candidate.cotizacion.envio_monto) || 0
+              : 0;
+          const descuento = Number(candidate.cotizacion.descuento) || 0;
+          candidate.cotizacion.total = productosTotal - descuento + envioMonto;
+        }
+
         finalProtocol = candidate;
         // Server controls metadata (today's date, doctor email) — never trust the model.
         enrichProtocolMetadata(finalProtocol, {
@@ -337,6 +416,28 @@ LLAMA finalize_protocol con el JSON completo. No respondas con texto suelto.`;
     );
 
     for (const { tc, result } of results) {
+      // Si fue get_product_price y devolvió MXN real, lo guardamos en
+      // pricedCatalog para SOBRESCRIBIR el precio del modelo más adelante.
+      if (tc.name === "get_product_price") {
+        try {
+          const args = tc.arguments ? JSON.parse(tc.arguments) : {};
+          const query = String(args.product_name ?? "").trim();
+          const r = result as { results?: Array<{ producto?: string; precio_mxn_con_iva?: number }> };
+          if (Array.isArray(r?.results) && r.results.length > 0) {
+            for (const row of r.results) {
+              if (typeof row.precio_mxn_con_iva === "number" && row.precio_mxn_con_iva > 0) {
+                pricedCatalog.push({
+                  query,
+                  nombre: String(row.producto ?? ""),
+                  mxn: row.precio_mxn_con_iva,
+                });
+              }
+            }
+          }
+        } catch (err) {
+          console.warn(`[generate-protocol] could not parse price result:`, err);
+        }
+      }
       input.push({
         type: "function_call_output",
         call_id: tc.call_id,

@@ -395,19 +395,40 @@ Cuando el doctor te da un dato, NO lo acuses ni lo repitas. Solo avanza.
 ❌ Doctor: "Retatrutida 8 mg semanal." → Tú: "Anotado: Retatrutida ocho miligramos semanal. ¿Día?"
 ✅ Doctor: "Retatrutida 8 mg semanal." → Tú: "¿Qué día de la semana?"
 
-# Las 3 ÚNICAS excepciones donde SÍ confirmas (1 vez, no más)
-Confirma SOLO en estos 3 casos — porque un error aquí arruina el protocolo entero. Nada más amerita confirm.
+# 🛑 CASOS donde CONFIRMAS (estrictamente acotados)
+Confirma SOLO en estos 2 casos Y SOLO cuando el audio sonó AMBIGUO (no porque sí). Si el doctor dictó claro, NO confirmes.
 
-1. **Nombre del paciente** la primera vez (riesgo de error de transcripción):
-   ✅ "¿Pedro Juárez, correcto?"
+1. **Nombre del paciente la primera vez** Y el nombre es raro/inusual o sonó cortado.
+   ✅ Doctor (mascullado): "Pe-dro Juá-rez" → Tú: "¿Pedro Juárez, correcto?"
+   ❌ Doctor claro: "Diego de la Garza" → Tú: "¿Diego de la Garza, correcto?" ← MAL, no confirmes
 
-2. **Presentación del vial en mg** la primera vez (15 vs 50 cambia toda la dosificación):
-   ✅ Doctor: "Reta de 15 mg" → Tú: "¿Quince miligramos, correcto?"
+2. **Vial mg + dosis mg** si el doctor dictó SOLO el número sin contexto Y el valor está fuera del rango típico.
+   ✅ Doctor: "ocho" (solo número) → Tú: "¿Ocho miligramos, correcto?" (porque no quedó claro la unidad)
+   ❌ Doctor: "Retatrutida 15 mg, 8 mg por aplicación, 50 unidades, viernes" (todo claro de un tirón) → Tú: "¿Quince miligramos, correcto?" ← MAL, está clarísimo
 
-3. **Dosis prescrita en mg** la primera vez (8 mg vs 80 mg es vida-o-muerte):
-   ✅ Doctor: "Ocho miligramos por aplicación" → Tú: "¿Ocho miligramos, correcto?"
+**Regla maestra**: si el doctor dictó todos los datos en una frase fluida y entendible, ACÉPTALOS TODOS SIN CONFIRMAR. Procesa en silencio y pasa al siguiente campo en FALTA.
 
-NUNCA confirmes: moneda, peso, estatura, edad, objetivo, envío, frecuencia, día de la semana, duración. **Estos se aceptan en silencio.**
+NUNCA confirmes: moneda, peso, estatura, edad, objetivo, envío, frecuencia, día de la semana, duración, unidades de jeringa. **Estos se aceptan en silencio sin excepción.**
+
+# 🔁 DETECCIÓN DE DICTADO COMPUESTO (CRÍTICO — el doctor lo hace mucho)
+El doctor frecuentemente dicta varios datos en UNA sola oración. Tienes que CAPTURARLOS TODOS sin volver a preguntarlos. Ejemplos:
+
+Doctor: "Le vamos a dar retatrutida de 15 miligramos los días viernes"
+   → Capturas: presentación=15 mg, frecuencia=1× semana viernes
+   → MAL: "¿La frecuencia sería una vez por semana, verdad?" ← Ya lo dijo
+   → BIEN: "¿Qué dosis por aplicación?"
+
+Doctor: "Mujer, 80 kilos, 49 años, busca bajar de peso"
+   → Capturas: sexo, peso, edad, objetivo
+   → MAL: confirmar cualquiera de esos
+   → BIEN: "¿Estatura?"
+
+Doctor: "Todo en español, cotización en dólares, envío gratis"
+   → Capturas: idioma, moneda, envío
+   → MAL: "¿Confirmo dólares?" o "¿En español?" o "¿Envío gratis?"
+   → BIEN: siguiente campo faltante
+
+Antes de preguntar CUALQUIER cosa, revisa todo el historial — si el dato ya fue dicho aunque sea de pasada, NO lo vuelvas a pedir.
 
 # Anti-resumen
 NO resumas lo que llevas hasta el momento. El doctor lo recuerda. NO digas "vamos a armar el protocolo con tres viales de Retatrutida: uno de quince mg, otro de treinta…" — eso es repetir TODO. El doctor te dictó esos datos hace 30 segundos, los recuerda.
@@ -902,8 +923,6 @@ export default function VoiceAgent({
         // está cerrando, el tool execute resuelve después, el SDK intenta
         // mandar function_call_output por un channel ya cerrado). Eso
         // dispara un 'error' que NO es del doctor — es ruido del cierre.
-        // Si lo mostramos, el doctor ve "Error en la sesión de voz" justo
-        // cuando debería ver "Generando protocolo…". Lo ignoramos.
         if (handoffActiveRef.current) {
           console.warn("[voice] suppressed error during handoff");
           return;
@@ -914,6 +933,21 @@ export default function VoiceAgent({
             : err?.error instanceof Error
             ? err.error.message
             : "Error en la sesión de voz";
+        // Filter BENIGNOS: mensajes del cierre del WebRTC channel que el
+        // SDK emite cuando una tool resuelve después del close, o cuando
+        // la sesión está terminando por cualquier razón. NO son errores
+        // que el doctor deba ver — pero antes los mostrábamos como
+        // "Error en la sesión de voz" rojo. Bug reportado por Marco.
+        const benignPatterns = [
+          /data channel is not connected/i,
+          /WebRTC data channel/i,
+          /connect\(\) before sending events/i,
+          /Connection closed/i,
+        ];
+        if (benignPatterns.some((re) => re.test(msg))) {
+          console.warn(`[voice] suppressed benign close-race error: ${msg}`);
+          return;
+        }
         setError(msg);
         setStatus("error");
       });

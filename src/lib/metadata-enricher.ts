@@ -168,11 +168,23 @@ export function enrichProtocolMetadata(
       protocol.cotizacion.total = toUsd(protocol.cotizacion.total);
     }
     // Nota explícita en la cotización para que el doctor sepa cuál FX se
-    // usó (auditable). Se prepende a la nota que el modelo haya escrito.
+    // usó (auditable). Se prepende a la nota que el modelo haya escrito —
+    // PERO si el modelo ya escribió una nota de "Tipo de cambio aplicado"
+    // (lo hace a veces pese a la regla 6 del prompt), la sobrescribimos
+    // limpia en lugar de duplicar. El PDF de Marco salía con la frase
+    // dos veces.
     const fxNote = `Tipo de cambio aplicado: ${effectiveFx.toFixed(2)} MXN/USD. Confirmar al cobrar.`;
-    protocol.cotizacion.nota = protocol.cotizacion.nota
-      ? `${fxNote} ${protocol.cotizacion.nota}`
-      : fxNote;
+    const existing = protocol.cotizacion.nota ?? "";
+    // Strip cualquier mención previa de "Tipo de cambio aplicado: ... MXN/USD."
+    // (con o sin "Confirmar al cobrar.") que el modelo pudo haber metido.
+    const cleaned = existing
+      .replace(
+        /Tipo de cambio aplicado:\s*\d+(?:\.\d+)?\s*MXN\/USD\.?(\s*Confirmar al cobrar\.?)?/gi,
+        ""
+      )
+      .replace(/\s{2,}/g, " ")
+      .trim();
+    protocol.cotizacion.nota = cleaned ? `${fxNote} ${cleaned}` : fxNote;
   }
 
   return protocol;
