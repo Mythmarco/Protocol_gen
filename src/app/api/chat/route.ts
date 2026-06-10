@@ -6,6 +6,7 @@ import { executePeptideTool, executeListPeptidesTool } from "@/lib/peptide-tool"
 import { executePriceTool } from "@/lib/price-tool";
 import { executeMemoryTool } from "@/lib/memory-tool";
 import { patientHash } from "@/lib/safe-log";
+import { newRequestId } from "@/lib/observability";
 import { PROTOCOL_JSON_MARKER, type ProtocoloData } from "@/lib/protocol-types";
 
 // Text mode using OpenAI Responses API + GPT-5.5 + Structured Outputs.
@@ -34,6 +35,11 @@ export async function POST(req: Request) {
   if (!process.env.OPENAI_API_KEY) {
     return new Response("OPENAI_API_KEY missing", { status: 500 });
   }
+
+  // Request-id corto para correlacionar logs con el mensaje de error que
+  // el doctor ve en pantalla. Sin esto, "me salió error" no era diagnosticable.
+  // Workflow item 8.
+  const reqId = newRequestId();
 
   const body = (await req.json()) as {
     messages: Array<{ role: "user" | "assistant"; content: string }>;
@@ -236,9 +242,11 @@ export async function POST(req: Request) {
           void assistantTextBuffer;
         }
       } catch (err) {
-        console.error("[chat] stream error:", err);
+        console.error(`[chat] reqId=${reqId} stream error:`, err);
         controller.enqueue(
-          encoder.encode("\n\n[Error generando respuesta. Intenta de nuevo.]")
+          encoder.encode(
+            `\n\n[Error #${reqId} generando respuesta. Intenta de nuevo o repórtalo con ese código.]`
+          )
         );
       } finally {
         controller.close();

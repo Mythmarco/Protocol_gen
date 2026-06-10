@@ -171,6 +171,15 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
   // una conversación viva (voice o text). null = cerrado; HistoryItem =
   // pending de cargar si confirma.
   const [pendingHistoryLoad, setPendingHistoryLoad] = useState<HistoryItem | null>(null);
+  // Modal bloqueante para fallas de save (Drive o Supabase). Antes era un
+  // toast warning que se autodimissaba en 4s — el doctor no se daba cuenta
+  // que su PDF NO se archivó y acumulaba protocolos huérfanos. Workflow
+  // item 7. El modal exige acción explícita (reintentar / aceptar).
+  const [saveFailure, setSaveFailure] = useState<{
+    folio: string;
+    error: string;
+  } | null>(null);
+  const [isRetryingSave, setIsRetryingSave] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewHTML, setPreviewHTML] = useState<string>("");
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -539,6 +548,8 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
 
       if (saveStatus === "ok") {
         showToast("ok", { folio, driveUrl });
+        // Cierra el modal de save-failure si veníamos de un retry exitoso.
+        setSaveFailure(null);
         // El protocolo SÍ se archivó → flip a estado "archivado".
         // El originId que pasamos arriba (savedSnapshot?.originId) ahora
         // queda como el row de este protocolo — la próxima edición hará
@@ -552,10 +563,13 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
         });
       } else {
         // El PDF se generó pero algo del archivado falló (Drive o Supabase).
-        // El doctor ya tiene el PDF descargado, pero NO marcamos como archivado.
-        showToast("warning", {
+        // Antes mostrábamos un toast warning que se desaparecía en 4s —
+        // el doctor no se enteraba que su PDF NO se archivó. Ahora abrimos
+        // un MODAL bloqueante que exige acción explícita (reintentar o
+        // aceptar). Workflow item 7.
+        setSaveFailure({
           folio,
-          message: saveError || "El protocolo no se guardó en Drive/BD.",
+          error: saveError || "El protocolo no se guardó en Drive/BD.",
         });
       }
 
@@ -1973,6 +1987,73 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
                 className="flex-1 px-4 py-2.5 rounded-xl bg-stone-900 text-white font-medium text-sm hover:bg-stone-800 active:bg-stone-700 transition-colors"
               >
                 Cargar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Save failure modal — BLOQUEANTE. El doctor TIENE que ver y
+          tomar acción cuando el PDF se generó pero NO se archivó en
+          Drive/BD. Antes era un toast warning que se autodimissaba y el
+          doctor se quedaba con la impresión de que estaba guardado.
+          Workflow item 7. role=alertdialog + aria-live=assertive. */}
+      {saveFailure && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          role="alertdialog"
+          aria-live="assertive"
+          aria-labelledby="save-fail-title"
+          aria-describedby="save-fail-body"
+          style={{ animation: "fadeIn 180ms ease-out" }}
+        >
+          <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl border border-stone-200 p-5">
+            <div className="flex items-start gap-3 mb-3">
+              <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center flex-shrink-0">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#d97706" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                  <line x1="12" y1="9" x2="12" y2="13"/>
+                  <line x1="12" y1="17" x2="12.01" y2="17"/>
+                </svg>
+              </div>
+              <div className="flex-1">
+                <h3 id="save-fail-title" className="text-base font-semibold text-stone-900">
+                  PDF generado, pero NO archivado
+                </h3>
+                <p id="save-fail-body" className="text-sm text-stone-600 mt-1 leading-snug">
+                  Folio <span className="font-mono font-semibold text-stone-800">{saveFailure.folio}</span> — el PDF está descargado en tu dispositivo, pero NO se guardó en Drive ni en la base.
+                </p>
+              </div>
+            </div>
+            <div className="bg-stone-50 border border-stone-200 rounded-lg p-3 mb-4 max-h-32 overflow-y-auto">
+              <div className="text-[11px] text-stone-500 uppercase tracking-wider mb-1 font-semibold">
+                Detalle técnico
+              </div>
+              <div className="text-xs text-stone-700 break-words font-mono">
+                {saveFailure.error}
+              </div>
+            </div>
+            <div className="flex flex-col gap-2">
+              <button
+                onClick={async () => {
+                  setIsRetryingSave(true);
+                  try {
+                    await handleDownloadPDF();
+                  } finally {
+                    setIsRetryingSave(false);
+                  }
+                }}
+                disabled={isRetryingSave}
+                className="w-full px-4 py-3 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-60 text-white font-semibold text-sm transition-colors"
+              >
+                {isRetryingSave ? "Reintentando…" : "Reintentar guardado"}
+              </button>
+              <button
+                onClick={() => setSaveFailure(null)}
+                disabled={isRetryingSave}
+                className="w-full px-4 py-2.5 rounded-xl border border-stone-200 text-stone-700 font-medium text-sm hover:bg-stone-50 transition-colors"
+              >
+                Aceptar (el PDF queda solo en mi dispositivo)
               </button>
             </div>
           </div>

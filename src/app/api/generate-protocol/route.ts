@@ -6,6 +6,7 @@ import { executeMemoryTool } from "@/lib/memory-tool";
 import { OPENAI_RESPONSES_TOOLS } from "@/lib/openai-tools";
 import { enrichProtocolMetadata } from "@/lib/metadata-enricher";
 import { patientHash } from "@/lib/safe-log";
+import { newRequestId } from "@/lib/observability";
 import type { ProtocoloData } from "@/lib/protocol-types";
 
 // Voice-to-reasoning handoff. Called by the Realtime voice agent's
@@ -153,6 +154,15 @@ LLAMA finalize_protocol con el JSON completo. No respondas con texto suelto.`;
 
   let finalProtocol: ProtocoloData | null = null;
   const t0 = Date.now();
+  const reqId = newRequestId();
+  // Trackeo de queries de precio que el modelo SÍ ejecutó. Al finalizar
+  // verificamos que cada producto cotizado tenga un get_product_price
+  // matcheable en el historial — sin esto el modelo puede emitir
+  // finalize y get_product_price en el MISMO turno y se procesa el
+  // finalize primero (con precios alucinados). Workflow item 6.
+  const pricedQueries = new Set<string>();
+  const normQuery = (q: string) =>
+    q.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 
   // Agentic loop. Max 5 turns (era 8) — el prompt ahora obliga a tools
   // en paralelo, deberían bastar 2 turnos en el caso típico (lookups +
@@ -199,11 +209,82 @@ LLAMA finalize_protocol con el JSON completo. No respondas con texto suelto.`;
       } as OpenAI.Responses.ResponseInputItem);
     }
 
+    // Trackea queries de get_product_price ejecutadas ANTES de procesar
+    // finalize — el modelo puede emitir ambos en el mismo turno.
+    for (const tc of turnToolCalls) {
+      if (tc.name === "get_product_price") {
+        try {
+          const args = tc.arguments ? JSON.parse(tc.arguments) : {};
+          if (typeof args.product_name === "string") {
+            pricedQueries.add(normQuery(args.product_name));
+          }
+        } catch {}
+      }
+    }
+
     // Did the model call finalize?
     const finalCall = turnToolCalls.find((c) => c.name === "finalize_protocol");
     if (finalCall) {
       try {
-        finalProtocol = JSON.parse(finalCall.arguments) as ProtocoloData;
+        const candidate = JSON.parse(finalCall.arguments) as ProtocoloData;
+
+        // VALIDACIÓN — cada producto cotizado debe matchear con al menos
+        // un get_product_price ejecutado en el historial. Si el modelo
+        // intentó alucinar precios sin consultar el catálogo, lo rechazamos
+        // y forzamos un turno más con instrucción explícita.
+        const productosCotizados = Array.isArray(candidate.cotizacion?.productos)
+          ? candidate.cotizacion.productos
+          : [];
+        const unverified: string[] = [];
+        for (const p of productosCotizados) {
+          const nm = typeof p?.nombre === "string" ? p.nombre : "";
+          if (!nm) continue;
+          // Acepta si el nombre del producto o cualquier sustring "palabra"
+          // matchea con alguna query ejecutada. Tolerante a discrepancias
+          // de mayúsculas/concentración (ej. "Retatrutida 15 mg" cotizado,
+          // query fue "Retatrutida 15mg" — ambos normalizan igual).
+          const normNm = normQuery(nm);
+          const words = normNm.split(" ").filter((w) => w.length >= 3);
+          const matched = [...pricedQueries].some(
+            (q) =>
+              q.includes(normNm) ||
+              normNm.includes(q) ||
+              // Al menos una palabra significativa en común (anti-alucinación
+              // débil pero suficiente para detectar "el modelo inventó")
+              (words.length > 0 && words.some((w) => q.includes(w)))
+          );
+          if (!matched && Number(p?.precio_unitario) > 0) {
+            unverified.push(nm);
+          }
+        }
+
+        if (unverified.length > 0) {
+          console.warn(
+            `[generate-protocol] reqId=${reqId} REJECTED finalize — ${unverified.length} productos sin get_product_price: ${unverified.join(", ")}`
+          );
+          // Push the finalize_call y un output que le diga al modelo qué hizo mal
+          input.push({
+            type: "function_call",
+            call_id: finalCall.call_id,
+            name: finalCall.name,
+            arguments: finalCall.arguments,
+          } as OpenAI.Responses.ResponseInputItem);
+          input.push({
+            type: "function_call_output",
+            call_id: finalCall.call_id,
+            output: JSON.stringify({
+              error: "validation_failed",
+              reason:
+                "Cotizaste productos sin haberlos consultado con get_product_price antes. NO inventes precios. Llama get_product_price para CADA uno y vuelve a finalize.",
+              unverified_products: unverified,
+            }),
+          } as OpenAI.Responses.ResponseInputItem);
+          // Continúa al siguiente turno — el modelo debe llamar
+          // get_product_price y re-emitir finalize.
+          continue;
+        }
+
+        finalProtocol = candidate;
         // Server controls metadata (today's date, doctor email) — never trust the model.
         enrichProtocolMetadata(finalProtocol, {
           name: session.name ?? "",
@@ -212,9 +293,9 @@ LLAMA finalize_protocol con el JSON completo. No respondas con texto suelto.`;
         // No loggeamos el nombre del paciente — hash en su lugar para
         // que Marco pueda correlacionar logs sin que Vercel se convierta
         // en un PHI store (LFPDPPP/HIPAA-equivalent).
-        console.log(`[generate-protocol] finalized ${patientHash(finalProtocol.paciente?.nombre)}`);
+        console.log(`[generate-protocol] reqId=${reqId} finalized ${patientHash(finalProtocol.paciente?.nombre)}`);
       } catch (err) {
-        console.error("[generate-protocol] finalize parse failed:", err);
+        console.error(`[generate-protocol] reqId=${reqId} finalize parse failed:`, err);
       }
       break;
     }
@@ -267,14 +348,27 @@ LLAMA finalize_protocol con el JSON completo. No respondas con texto suelto.`;
     );
   }
 
-  console.log(`[generate-protocol] total ${Date.now() - t0}ms`);
+  console.log(`[generate-protocol] reqId=${reqId} total ${Date.now() - t0}ms`);
 
   if (!finalProtocol) {
+    // Snapshot mínimo para diagnóstico — sin esto Marco no podía saber
+    // si el modelo falló por timeout, por validación de precios, por
+    // alucinación de schema, etc. Loggeamos resumen NO-PHI (hashes, no
+    // nombres). Workflow item 9.
+    console.error(
+      `[generate-protocol] reqId=${reqId} NO FINALIZE — turns=${5}, ` +
+        `priced_queries=${pricedQueries.size}, ` +
+        `input_items=${input.length}, ` +
+        `elapsed=${Date.now() - t0}ms`
+    );
     return Response.json(
-      { error: "El modelo no produjo un protocolo final. Reintenta o pide más datos al médico." },
+      {
+        error: "El modelo no produjo un protocolo final. Reintenta o pide más datos al médico.",
+        request_id: reqId,
+      },
       { status: 500 }
     );
   }
 
-  return Response.json({ protocol: finalProtocol });
+  return Response.json({ protocol: finalProtocol, request_id: reqId });
 }
