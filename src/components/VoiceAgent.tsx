@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RealtimeAgent, RealtimeSession, tool } from "@openai/agents/realtime";
 import type { ProtocoloData } from "@/lib/protocol-types";
 import { useVoiceLevels } from "@/hooks/useVoiceLevels";
@@ -656,12 +656,28 @@ export default function VoiceAgent({
     }
   }, []);
 
+  // Scroll cuando llega un turno nuevo (cambio de length, no identidad).
+  // Antes la dep era [transcript, bottomActionCard]: como bottomActionCard
+  // es un ReactNode que se re-crea en cada render del ChatPage (handlers,
+  // state derivado), este efecto se disparaba decenas de veces durante el
+  // handoff de 15-60s → scrollIntoView constante → UX laggy. Workflow
+  // item 1: causa raíz del laggy durante el handoff.
+  //
+  // Doble useRef pattern: trackeamos length del transcript y "tiene card?"
+  // por separado en refs. Solo scrolleamos cuando alguno cambia REALMENTE,
+  // no en cada render.
+  const prevTranscriptLenRef = useRef(transcript.length);
+  const prevHasCardRef = useRef(Boolean(bottomActionCard));
   useEffect(() => {
-    transcriptBottomRef.current?.scrollIntoView({ behavior: "smooth" });
-    // También scrollea cuando el bottomActionCard cambia — al cargar un
-    // protocolo de historial el card aparece y el doctor debe verlo, no
-    // tener que scrollear manualmente para encontrarlo.
-  }, [transcript, bottomActionCard]);
+    const lenChanged = transcript.length !== prevTranscriptLenRef.current;
+    const cardJustAppeared =
+      Boolean(bottomActionCard) && !prevHasCardRef.current;
+    prevTranscriptLenRef.current = transcript.length;
+    prevHasCardRef.current = Boolean(bottomActionCard);
+    if (lenChanged || cardJustAppeared) {
+      transcriptBottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [transcript.length, bottomActionCard]);
 
   const cleanup = useCallback(() => {
     // Wrap in try/catch — the SDK throws "WebRTC data channel is not connected"
@@ -905,6 +921,16 @@ export default function VoiceAgent({
     }
   }, [cleanup, doctorName, onProtocolGenerated, setMicEnabled, status, transcript]);
 
+  // Índice del último turno assistant (donde se ancla el action card).
+  // useMemo evita re-loopear el transcript en cada re-render del componente
+  // padre cuando solo cambia bottomActionCard. Workflow item 1 (perf).
+  const lastAssistantIdx = useMemo(() => {
+    for (let i = transcript.length - 1; i >= 0; i--) {
+      if (transcript[i].role === "assistant") return i;
+    }
+    return -1;
+  }, [transcript]);
+
   const statusLabel = (() => {
     switch (status) {
       case "idle": return "Toca el micrófono para empezar";
@@ -1047,19 +1073,7 @@ export default function VoiceAgent({
               El orb + mic + status arriba son flex-shrink-0 (nunca se
               comprimen); el transcript fluye dentro del espacio restante. */}
           <div className="space-y-3">
-            {(() => {
-              // Localiza el índice del último mensaje assistant — el action
-              // card (vista previa / descargar / guardar / compartir) se
-              // ancla DENTRO de ese mismo bubble para que se sienta como
-              // parte del último output del agente, no como toolbar.
-              let lastAssistantIdx = -1;
-              for (let i = transcript.length - 1; i >= 0; i--) {
-                if (transcript[i].role === "assistant") {
-                  lastAssistantIdx = i;
-                  break;
-                }
-              }
-              return transcript.map((entry, i) => {
+            {transcript.map((entry, i) => {
                 const isLastAssistant = i === lastAssistantIdx;
                 const showCard = isLastAssistant && bottomActionCard;
                 return (
@@ -1085,8 +1099,7 @@ export default function VoiceAgent({
                     </div>
                   </div>
                 );
-              });
-            })()}
+            })}
             <div ref={transcriptBottomRef} />
           </div>
         </div>
