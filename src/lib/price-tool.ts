@@ -63,7 +63,18 @@ interface PriceRow {
 }
 
 let cache: { rows: PriceRow[]; fetchedAt: number } | null = null;
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5 min
+// TTL bajado a 60s (era 5 min). Marco edita el Sheet en vivo cuando los
+// precios cambian. Antes había ventanas de hasta 5 min donde algunos
+// PDFs salían con precios stale sin manera de saberlo. 60s es el sweet
+// spot: refresca rápido en respuesta a edits, sigue evitando hammering
+// del Sheets API en burst de varios PDFs seguidos. Workflow item 2.
+const CACHE_TTL_MS = 60 * 1000;
+
+/** Invalida el cache manualmente — usado por /api/admin/invalidate-price-cache
+ *  cuando Marco edita el Sheet y quiere ver el cambio inmediato. */
+export function invalidatePriceCache(): void {
+  cache = null;
+}
 
 export const PRICE_TOOL: Anthropic.Tool = {
   name: "get_product_price",

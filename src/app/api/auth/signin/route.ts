@@ -92,35 +92,41 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "server_error" }, { status: 500 });
   }
 
-  // Debug logs SOLO en dev. En prod los logs van a Vercel y son searchable.
-  const dlog = (msg: string) => {
-    if (process.env.NODE_ENV !== "production") console.log(`[signin] ${msg}`);
+  // Single non-granular log para todos los fallos de signin. Antes
+  // teníamos dlog específico ("no User row" / "no password column" /
+  // "bcrypt mismatch") gated por NODE_ENV. Pero un Vercel preview deploy
+  // o un staging mal configurado podía leakear la granularidad y permitir
+  // enumeración: atacante distingue "este email existe" de "password
+  // mala". Workflow item 16. Ahora UN solo mensaje uniforme para todos.
+  const failSignin = () => {
+    console.log(`[signin] failed reason=invalid_credentials`);
+    return NextResponse.json({ error: "invalid_credentials" }, { status: 401 });
   };
 
   if (!user) {
-    dlog(`no User row for normalized email`);
     // Constant-time miss to avoid email enumeration via timing side-channel.
     await bcrypt.compare(
       password,
       "$2a$10$0000000000000000000000000000000000000000000000000000"
     );
-    return NextResponse.json({ error: "invalid_credentials" }, { status: 401 });
+    return failSignin();
   }
 
   if (!user.password) {
-    dlog("User row has no password column value");
-    return NextResponse.json({ error: "invalid_credentials" }, { status: 401 });
+    return failSignin();
   }
 
   const valid = await bcrypt.compare(password, user.password);
 
   if (!valid) {
-    dlog(`bcrypt mismatch`);
-    return NextResponse.json({ error: "invalid_credentials" }, { status: 401 });
+    return failSignin();
   }
 
   if (user.role !== "ADMIN") {
-    dlog(`user role '${user.role}' not ADMIN`);
+    // Role mismatch es un caso distinto: el doctor tiene la password
+    // correcta pero NO es admin. Mantenemos 403 separado pero NO logueamos
+    // el rol específico (también evita fingerprinting del schema).
+    console.log(`[signin] failed reason=not_admin`);
     return NextResponse.json({ error: "not_admin" }, { status: 403 });
   }
 
