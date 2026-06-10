@@ -5,6 +5,7 @@ import { ProtocoloData } from "@/lib/protocol-types";
 import { uploadPDFToDrive, isDriveConfigured } from "@/lib/drive";
 import { enrichProtocolMetadata } from "@/lib/metadata-enricher";
 import { escapeHTML } from "@/lib/html-escape";
+import { getDoctorFxRate } from "@/lib/settings";
 import puppeteer, { type Browser, type Page } from "puppeteer-core";
 import chromium from "@sparticuz/chromium-min";
 import { z } from "zod";
@@ -122,10 +123,14 @@ export async function POST(req: Request) {
   const { conversacion, conversacion_modo, mode, originId } = parsed.data;
   const downloadOnly = mode === "download";
 
-  // ── 0. Enrich metadata server-side (today's date, doctor email) ──
+  // ── 0. Enrich metadata server-side (today's date, doctor email, FX) ──
+  // El FX del doctor (de protocol_gen_settings) gana sobre el env var.
+  // Si no hay valor, getDoctorFxRate cae a env → default 18.5.
+  const fxInfo = await getDoctorFxRate(session.id);
   enrichProtocolMetadata(protocolData, {
     name: session.name ?? "",
     email: session.email,
+    fxRate: fxInfo.rate,
   });
 
   const supabase = createAdminClient();

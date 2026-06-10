@@ -12,6 +12,7 @@ import ThinkingIndicator from "./chat/ThinkingIndicator";
 import type { HistoryItem } from "./chat/types";
 import { injectMobilePreviewCloseButton } from "@/lib/preview-overlay";
 import { EMPTY_TEMPLATE, EXAMPLE_TEMPLATES } from "@/lib/quick-templates";
+import FxRateSetting from "./chat/FxRateSetting";
 
 interface Message {
   role: "user" | "assistant";
@@ -1129,14 +1130,21 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
           )}
         </div>
 
-        <div className="p-4 border-t border-stone-700">
-          <div className="text-xs text-stone-400 truncate mb-2">{user.email}</div>
-          <button
-            onClick={handleSignOut}
-            className="text-xs text-stone-500 hover:text-stone-300 transition-colors"
-          >
-            Cerrar sesión
-          </button>
+        <div className="p-4 border-t border-stone-700 space-y-3">
+          {/* FX rate setting con tema oscuro inline (el componente usa
+              fondos claros) — wrappeamos para forzar contraste apropiado. */}
+          <div className="bg-stone-800 rounded-xl p-3">
+            <FxRateSetting />
+          </div>
+          <div>
+            <div className="text-xs text-stone-400 truncate mb-2">{user.email}</div>
+            <button
+              onClick={handleSignOut}
+              className="text-xs text-stone-500 hover:text-stone-300 transition-colors"
+            >
+              Cerrar sesión
+            </button>
+          </div>
         </div>
       </aside>
 
@@ -1645,10 +1653,13 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
                 </svg>
               </button>
             </div>
-            <div className="p-5 flex flex-col gap-3">
+            <div className="p-5 flex flex-col gap-4">
               <div>
                 <div className="text-xs text-stone-500 uppercase tracking-wider mb-1">Sesión</div>
                 <div className="text-sm text-stone-800 break-all">{user.email}</div>
+              </div>
+              <div className="border-t border-stone-100 pt-4">
+                <FxRateSetting />
               </div>
               <button
                 onClick={handleSignOut}

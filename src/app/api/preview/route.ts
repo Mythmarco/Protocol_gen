@@ -1,6 +1,7 @@
 import { getSession } from "@/lib/session";
 import { buildProtocolHTML } from "@/lib/protocol-template";
 import { enrichProtocolMetadata } from "@/lib/metadata-enricher";
+import { getDoctorFxRate } from "@/lib/settings";
 import type { ProtocoloData } from "@/lib/protocol-types";
 import { z } from "zod";
 
@@ -82,10 +83,12 @@ export async function POST(req: Request) {
   const protocolData = parsed.data.protocolData as unknown as ProtocoloData;
   // Enriquecer con fechas/FX server-side para que preview y PDF salgan
   // idénticos. Antes preview usaba la fecha del modelo y el PDF la del
-  // servidor → confusión.
+  // servidor → confusión. FX cargado del doctor (settings) → env → default.
+  const fxInfo = await getDoctorFxRate(session.id);
   enrichProtocolMetadata(protocolData, {
     name: session.name ?? "",
     email: session.email,
+    fxRate: fxInfo.rate,
   });
 
   const html = buildProtocolHTML(protocolData, {
