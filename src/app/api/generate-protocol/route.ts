@@ -441,7 +441,7 @@ LLAMA finalize_protocol con el JSON completo. No respondas con texto suelto.`;
           };
 
           let overwrites = 0;
-          let mismatches: string[] = [];
+          const mismatches: string[] = [];
           candidate.cotizacion.productos = candidate.cotizacion.productos.map((p) => {
             const realMxn = matchPrice(String(p?.nombre ?? ""));
             if (realMxn != null && realMxn !== Number(p?.precio_unitario)) {
