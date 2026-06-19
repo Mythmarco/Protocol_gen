@@ -48,6 +48,13 @@ const PROTOCOL_PREVIEW_SCHEMA = z.object({
       total: z.number(),
       nota: z.string().max(2000),
       folio: z.string().max(60).optional().nullable(),
+      // CRÍTICO: si NO está en el schema, zod lo strippea por default y
+      // el enricher no lo ve → convierte los precios USD del doctor
+      // como si fueran MXN. Bug reportado por Marco: PDF saved con
+      // $382 correcto pero PREVIEW mostraba $23.15. Causa: /api/pdf
+      // usa cotizacion.passthrough() (preserva extras), /api/preview
+      // usa schema estricto que omitía este campo.
+      skip_fx_conversion: z.boolean().optional(),
     }),
     metadata: z.object({
       idioma: z.enum(["es", "en"]),
