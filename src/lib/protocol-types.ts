@@ -57,6 +57,11 @@ export interface ProtocoloData {
     nota: string;
     // Filled server-side from a Supabase sequence right before PDF generation.
     folio?: string;
+    // true → precios YA están en cotizacion.moneda (doctor los dio explícitos
+    // ej. "$382 USD"). Server NO los convierte. Default false: precios en
+    // MXN del catálogo, server convierte a USD si aplica. Optional para
+    // backward-compat con protocolos viejos del historial.
+    skip_fx_conversion?: boolean;
   };
   metadata: {
     version: string;

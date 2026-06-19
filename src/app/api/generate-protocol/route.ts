@@ -109,6 +109,8 @@ Estos campos están en el schema como required pero el modelo tiende a inventarl
 
 - **cotizacion.total** = sum(productos[i].qty × productos[i].precio_unitario) − cotizacion.descuento + (cotizacion.envio_tipo === "costo" ? cotizacion.envio_monto : 0). Calcula tú el total en MXN antes de mandarlo. El servidor hace la conversión a USD si aplica.
 - **cotizacion.descripcion** = "Paquete de {duracion_meses} mes(es) para {paciente.nombre}". Una sola línea.
+- **cotizacion.skip_fx_conversion** = false por default. true SOLO si \`gathered.notas_doctor\` o el contexto contiene precios EXPLÍCITOS en USD que el doctor dictó (ej. "Reta es $382 USD"). En ese caso pones esos precios EXACTOS, sin convertir, y el servidor NO los toca.
+- **peptidos[i].nombre y cotizacion.productos[i].nombre y calendario[i].peptido_label** deben incluir el GRAMAJE del vial: "Retatrutide 30 mg", "NAD+ 1000 mg", "GHK-Cu 50 mg". NUNCA solo "Retatrutide".
 - **cotizacion.folio** = "" (string vacío). El servidor asigna el folio real al guardar. NUNCA inventes uno.
 - **cotizacion.nota** = "" por default. Solo escribe algo si: (a) hay productos omitidos por regla 3, (b) hay concentración inexistente por regla 4, (c) hubo error de catálogo por regla 5, (d) el doctor te dio una nota específica. NO repitas info que ya está en la tabla.
 - **metadata.fecha_inicio** = mismo valor que metadata.fecha (hoy en formato YYYY-MM-DD).
@@ -340,11 +342,17 @@ LLAMA finalize_protocol con el JSON completo. No respondas con texto suelto.`;
         // un get_product_price ejecutado en el historial. Si el modelo
         // intentó alucinar precios sin consultar el catálogo, lo rechazamos
         // y forzamos un turno más con instrucción explícita.
+        //
+        // EXCEPCIÓN: skip_fx_conversion=true significa que el doctor dio
+        // precios MANUALMENTE en el chat. No validamos contra catálogo
+        // porque son del doctor por definición — saltarse esta validación.
         const productosCotizados = Array.isArray(candidate.cotizacion?.productos)
           ? candidate.cotizacion.productos
           : [];
+        const skipValidation =
+          candidate.cotizacion?.skip_fx_conversion === true;
         const unverified: string[] = [];
-        for (const p of productosCotizados) {
+        if (!skipValidation) for (const p of productosCotizados) {
           const nm = typeof p?.nombre === "string" ? p.nombre : "";
           if (!nm) continue;
           // Acepta si el nombre del producto o cualquier sustring "palabra"
@@ -397,7 +405,15 @@ LLAMA finalize_protocol con el JSON completo. No respondas con texto suelto.`;
         // enrichProtocolMetadata convertía OTRA vez → precios divididos
         // dos veces ($6,960 → $24.08 en lugar de $409.41). Ahora el
         // servidor pone el precio MXN canónico ANTES de enriquecer.
-        if (Array.isArray(candidate.cotizacion?.productos)) {
+        //
+        // EXCEPCIÓN: si el doctor proporcionó precios MANUALMENTE (flag
+        // skip_fx_conversion=true), NO sobrescribimos. Esos precios son
+        // del doctor (típicamente USD negociados) y reemplazarlos con
+        // MXN del catálogo rompe el flow de edición. enricher también
+        // honra el flag y no convierte.
+        const userSuppliedPrices =
+          candidate.cotizacion?.skip_fx_conversion === true;
+        if (!userSuppliedPrices && Array.isArray(candidate.cotizacion?.productos)) {
           const matchPrice = (productoNombre: string): number | null => {
             const target = normQuery(productoNombre);
             if (!target) return null;

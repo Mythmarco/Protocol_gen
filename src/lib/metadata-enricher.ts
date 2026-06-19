@@ -147,9 +147,20 @@ export function enrichProtocolMetadata(
   //    convertir (regla 6). El FX se resuelve en orden:
   //      doctor.fxRate (pasado por el caller desde getDoctorFxRate) →
   //      env PEPTIDES_MXN_PER_USD → 18.5
+  //
+  //    EXCEPCIÓN: skip_fx_conversion=true significa que el doctor dio
+  //    precios MANUALES en USD ("Reta es $382 USD"). En ese caso los
+  //    valores YA están en cotizacion.moneda y NO debemos tocarlos.
+  //    Sin esto el server dividía esos $382 entre 17 → $22.47 USD en
+  //    el PDF → factura mal al paciente (bug reportado por Marco).
   const effectiveFx =
     doctor.fxRate && doctor.fxRate > 0 ? doctor.fxRate : DEFAULT_FX_FALLBACK;
-  if (protocol.cotizacion?.moneda === "USD" && effectiveFx > 0) {
+  const skipFx = protocol.cotizacion?.skip_fx_conversion === true;
+  if (
+    !skipFx &&
+    protocol.cotizacion?.moneda === "USD" &&
+    effectiveFx > 0
+  ) {
     const toUsd = (mxn: number) =>
       Math.round((mxn / effectiveFx) * 100) / 100;
     if (Array.isArray(protocol.cotizacion.productos)) {

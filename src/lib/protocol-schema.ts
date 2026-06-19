@@ -128,6 +128,7 @@ export const PROTOCOL_JSON_SCHEMA = {
         "envio_monto",
         "total",
         "nota",
+        "skip_fx_conversion",
       ],
       properties: {
         descripcion: { type: "string" },
@@ -160,6 +161,11 @@ export const PROTOCOL_JSON_SCHEMA = {
           description: "sum(qty*precio_unitario) - descuento + envio_monto (si tipo='costo')",
         },
         nota: { type: "string" },
+        skip_fx_conversion: {
+          type: "boolean",
+          description:
+            "true SOLO si el doctor proporcionó precios MANUALMENTE en la moneda final (ej. 'Reta es $382 USD'). En ese caso precio_unitario, descuento, envio_monto y total YA están en cotizacion.moneda y el servidor NO los convertirá. Default false: el modelo cotizó con precios MXN del catálogo y el servidor convierte a USD si aplica.",
+        },
       },
     },
     metadata: {
