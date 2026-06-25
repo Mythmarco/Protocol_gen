@@ -1497,11 +1497,30 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
             </div>
           )}
 
-          {messages.map((msg, i) => {
+          {(() => {
+            // Encuentra el ÍNDICE del último mensaje assistant que tiene
+            // un protocolo embebido. SOLO ese mensaje renderea el action
+            // card. Iteraciones anteriores (donde el doctor pidió cambios
+            // y el bot re-emitió el JSON) quedan como solo texto — sin el
+            // card flotando con botones de un protocolo viejo. Bug reportado
+            // por Marco: el card de la primera generación se quedaba arriba
+            // mientras la siguiente edición se procesaba.
+            let lastProtocolIdx = -1;
+            for (let j = messages.length - 1; j >= 0; j--) {
+              if (
+                messages[j].role === "assistant" &&
+                messages[j].content.includes(PROTOCOL_JSON_MARKER)
+              ) {
+                lastProtocolIdx = j;
+                break;
+              }
+            }
+            return messages.map((msg, i) => {
             const isLast = i === messages.length - 1;
             const isAssistant = msg.role === "assistant";
             const hasJsonMarker = msg.content.includes(PROTOCOL_JSON_MARKER);
             const protocol = extractProtocolJSON(msg.content);
+            const isLatestProtocol = i === lastProtocolIdx;
             const cleanText = isAssistant ? cleanDisplayText(msg.content) : msg.content;
 
             // While streaming a protocol response, hide all text and show a loader.
@@ -1548,11 +1567,12 @@ export default function ChatPage({ user, history: initialHistory }: Props) {
                     <span className="whitespace-pre-wrap">{cleanText}</span>
                   )}
 
-                  {isAssistant && protocol && renderProtocolActionCard(protocol)}
+                  {isAssistant && protocol && isLatestProtocol && renderProtocolActionCard(protocol)}
                 </div>
               </div>
             );
-          })}
+            });
+          })()}
 
           <div ref={bottomRef} />
         </div>
