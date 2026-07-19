@@ -228,16 +228,39 @@ LLAMA finalize_protocol con el JSON completo. No respondas con texto suelto.`;
 
   for (let turn = 0; turn < 5; turn++) {
     const tTurn = Date.now();
-    const resp = await client.responses.create({
-      model: TEXT_MODEL,
-      instructions,
-      input,
-      tools: OPENAI_RESPONSES_TOOLS,
-      tool_choice: "auto",
-      reasoning: { effort },
-      text: { verbosity: "low" },
-      stream: false,
-    });
+    let resp;
+    try {
+      resp = await client.responses.create({
+        model: TEXT_MODEL,
+        instructions,
+        input,
+        tools: OPENAI_RESPONSES_TOOLS,
+        tool_choice: "auto",
+        reasoning: { effort },
+        text: { verbosity: "low" },
+        stream: false,
+      });
+    } catch (err) {
+      // Detecta 429/401/5xx de OpenAI y devuelve mensaje accionable al
+      // doctor en vez de un 500 opaco. Antes: 'Error #reqId'; ahora:
+      // 'cuota excedida, revisa billing'.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const anyErr = err as any;
+      const status = anyErr?.status ?? anyErr?.response?.status;
+      const msg = anyErr?.message ?? String(err);
+      console.error(`[generate-protocol] reqId=${reqId} OpenAI error status=${status}:`, msg);
+      let userError: string;
+      if (status === 429 || /quota|rate_limit|billing/i.test(msg)) {
+        userError = "OpenAI reportó cuota excedida (429). Marco: revisa billing en platform.openai.com y agrega crédito o sube el hard limit.";
+      } else if (status === 401 || /unauthorized|api key/i.test(msg)) {
+        userError = "OpenAI reportó credenciales inválidas. Marco: revisa OPENAI_API_KEY en Vercel.";
+      } else if (status === 503 || status === 504 || /timeout|overloaded/i.test(msg)) {
+        userError = "OpenAI está sobrecargado. Reintenta en 30-60 segundos.";
+      } else {
+        userError = `Error de OpenAI: ${msg.slice(0, 200)}`;
+      }
+      return Response.json({ error: userError, request_id: reqId }, { status: 502 });
+    }
 
     const turnToolCalls: Array<{ call_id: string; name: string; arguments: string }> = [];
     for (const item of resp.output) {

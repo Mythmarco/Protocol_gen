@@ -254,11 +254,25 @@ export async function POST(req: Request) {
         }
       } catch (err) {
         console.error(`[chat] reqId=${reqId} stream error:`, err);
-        controller.enqueue(
-          encoder.encode(
-            `\n\n[Error #${reqId} generando respuesta. Intenta de nuevo o repórtalo con ese código.]`
-          )
-        );
+        // Detecta casos comunes DIAGNOSTICABLES para darle al doctor un
+        // mensaje accionable en vez de un reqId opaco. Antes: '[Error #hash…]'
+        // → doctor tenía que preguntarme. Ahora: quota, timeout, red → dice
+        // qué hacer.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const anyErr = err as any;
+        const status = anyErr?.status ?? anyErr?.response?.status;
+        const msg = anyErr?.message ?? String(err);
+        let userMsg: string;
+        if (status === 429 || /quota|rate_limit|billing/i.test(msg)) {
+          userMsg = `\n\n⚠️ **OpenAI reportó cuota excedida (429).** Marco: revisa billing en platform.openai.com → agrega crédito o sube el hard limit. Ref: #${reqId}`;
+        } else if (status === 401 || /unauthorized|api key/i.test(msg)) {
+          userMsg = `\n\n⚠️ **OpenAI reportó credenciales inválidas.** Marco: revisa OPENAI_API_KEY en Vercel. Ref: #${reqId}`;
+        } else if (status === 503 || status === 504 || /timeout|overloaded/i.test(msg)) {
+          userMsg = `\n\n⚠️ **OpenAI está sobrecargado o no respondió a tiempo.** Reintenta en 30-60s. Ref: #${reqId}`;
+        } else {
+          userMsg = `\n\n[Error #${reqId} generando respuesta. Intenta de nuevo o repórtalo con ese código.]`;
+        }
+        controller.enqueue(encoder.encode(userMsg));
       } finally {
         controller.close();
       }
