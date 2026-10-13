@@ -59,8 +59,8 @@ const LABELS = {
       "<strong>Jeringa para reconstitución:</strong> usar la jeringa de <strong>3 mL</strong> incluida en el paquete.",
       "<strong>Jeringa para aplicación recomendada:</strong> jeringa de insulina de <strong>0.5 mL (hasta 50 unidades)</strong>.",
       "<strong>Vía de administración en este protocolo:</strong> <strong>subcutánea</strong>.",
-      "<strong>Reconstitución sugerida:</strong> 2 mL de agua bacteriostática por vial.",
     ],
+    reconstitutionLabel: "Reconstitución sugerida", reconstitutionDefault: "2 mL de agua bacteriostática por vial",
     syringeSpec: "6mm × 31G (15/64in length needle × 0.25mm) 1/2mL syringe up to 50 units.",
     reconstitutionBullets: [
       "Se enviarán los péptidos con <strong>agua bacteriostática</strong> para reconstitución.",
@@ -108,8 +108,8 @@ const LABELS = {
       "<strong>Reconstitution syringe:</strong> use the <strong>3 mL</strong> syringe included in the kit.",
       "<strong>Recommended application syringe:</strong> <strong>0.5 mL insulin syringe (up to 50 units)</strong>.",
       "<strong>Route of administration in this protocol:</strong> <strong>subcutaneous</strong>.",
-      "<strong>Suggested reconstitution:</strong> 2 mL bacteriostatic water per vial.",
     ],
+    reconstitutionLabel: "Suggested reconstitution", reconstitutionDefault: "2 mL bacteriostatic water per vial",
     syringeSpec: "6mm × 31G (15/64in length needle × 0.25mm) 1/2mL syringe up to 50 units.",
     reconstitutionBullets: [
       "Peptides will be shipped with <strong>bacteriostatic water</strong> for reconstitution.",
@@ -155,6 +155,11 @@ export function buildProtocolHTML(data: ProtocoloData, options: BuildOptions = {
     .join("");
 
   // Calendar is now an array of {peptido_label, Lunes..Domingo}. Render in row order.
+  // Marco, 12-oct-2026: la reconstitución de la hoja de jeringa sale del protocolo (antes era un texto fijo de 2 mL que podía contradecir el plan).
+  const reconSet = Array.from(new Set(protocolo.peptidos.map((p) => (p.reconstitucion || "").trim()).filter((r) => r && !/^mismo vial|^same vial/i.test(r))));
+  const reconstitutionBullets = reconSet.length
+    ? reconSet.map((r, i) => `<li><strong>${L.reconstitutionLabel}${reconSet.length > 1 ? ` (${esc(protocolo.peptidos.find((p) => (p.reconstitucion || "").trim() === r)?.nombre ?? String(i + 1))})` : ""}:</strong> ${esc(r)}.</li>`).join("")
+    : `<li><strong>${L.reconstitutionLabel}:</strong> ${L.reconstitutionDefault}.</li>`;
   const calendarRows = protocolo.calendario
     .map((entry) => `
     <tr>
@@ -350,6 +355,8 @@ export function buildProtocolHTML(data: ProtocoloData, options: BuildOptions = {
       body{background:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact}
       .page{margin:0;width:100%;min-height:auto;box-shadow:none;padding:6mm 10mm 6mm}
       .post-calendar-page,.quote-page{page-break-before:always;break-before:page;margin-top:0}
+      /* Marco, 12-oct-2026: la página 2 (jeringa/indicaciones) empezaba pegada al encabezado de Puppeteer; aire arriba como en la 1 y la 3. */
+      .post-calendar-page{padding-top:12mm}
       main.page.protocol-page .footer{display:none}
     }
   </style>
@@ -427,6 +434,7 @@ export function buildProtocolHTML(data: ProtocoloData, options: BuildOptions = {
           <h2 class="section-title">${L.syringePrep}</h2>
           <ul class="bullet-list">
             ${L.syringeBullets.map((b) => `<li>${b}</li>`).join("")}
+            ${reconstitutionBullets}
           </ul>
           <p class="syringe-spec">${L.syringeSpec}</p>
           <img class="syringe-image" src="${syringeURI}" alt="${L.syringeAlt}"/>
